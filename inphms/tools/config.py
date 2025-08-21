@@ -21,6 +21,22 @@ crypt_context = CryptContext(schemes=['pbkdf2_sha512', 'plaintext'],
                              deprecated=['plaintext'],
                              pbkdf2_sha512__rounds=600_000)
 
+class MyOption(optparse.Option, object):
+    """ optparse Option with two additional attributes.
+
+    The list of command line options (getopt.Option) is used to create the
+    list of the configuration file options. When reading the file, and then
+    reading the command line arguments, we don't want optparse.parse results
+    to override the configuration file values. But if we provide default
+    values to optparse, optparse will return them and we can't know if they
+    were really provided by the user or not. A solution is to not use
+    optparse's default attribute, but use a custom one (that will be copied
+    to create the default values of the configuration file).
+
+    """
+    def __init__(self, *opt, **attrs):
+        self.my_default = attrs.pop('my_default', None)
+        super(MyOption, self).__init__(*opt, **attrs)
 
 class configmanager(object):
     def __init__(self, fname=None):
@@ -43,5 +59,25 @@ class configmanager(object):
         ])
 
         version = "%s %s" % (release.description, release.version)
+        self.parser = parser = optparse.OptionParser(version=version, option_class=MyOption)
+    
+        self._parse_config()
+
+    def parse_config():
+        """ Parse the configuration file (if any) and the cli arguments.
+
+        This function init inphms.tools.config and inphms.conf
+
+        this method must be called before proper usage of this lib can be made.
+        
+        Typical usage of this function:
+
+            inphms.tools.config.parse_config(sys.argv[1:])
+        """
+        opt = self._parse_config(args)
+        if setup_logging is not False:
+            inphms.netsvc.init_logger()
+
+    def _parse_config():
 
 config = configmanager()
