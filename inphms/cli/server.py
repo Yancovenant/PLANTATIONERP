@@ -28,7 +28,7 @@ re._MAXCACHE = 4096
 
 def main(args):
     check_root_user()
-    inphms.tools.config.parse_config(args, setup_loading=True)
+    inphms.tools.config.parse_config(args, setup_logging=True)
     check_mysql_user()
     report_configuration()
 

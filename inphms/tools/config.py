@@ -63,7 +63,7 @@ class configmanager(object):
     
         self._parse_config()
 
-    def parse_config():
+    def parse_config(self, args: list[str] | None = None, *, setup_logging: bool | None = None) -> None:
         """ Parse the configuration file (if any) and the cli arguments.
 
         This function init inphms.tools.config and inphms.conf
@@ -78,6 +78,9 @@ class configmanager(object):
         if setup_logging is not False:
             inphms.netsvc.init_logger()
 
-    def _parse_config():
+    def _parse_config(self, args=None):
+        if args is None:
+            args = []
+        opt, args = self.parser.parse_args(args)
 
 config = configmanager()
