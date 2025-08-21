@@ -77,10 +77,32 @@ class configmanager(object):
         opt = self._parse_config(args)
         if setup_logging is not False:
             inphms.netsvc.init_logger()
+            if setup_logging is None:
+                warnings.warn(
+                    "It's recommended to specify wheter"
+                    " you want Inphms to setup its own logging"
+                    " (or want to handle it yourself)",
+                    category=PendingDeprecationWarning,
+                    stacklevel=2,
+                )
+        self._warn_deprecated_options()
+        inphms.modules.module.initialize_sys_path()
+        return opt
 
     def _parse_config(self, args=None):
         if args is None:
             args = []
         opt, args = self.parser.parse_args(args)
+    
+
+    def _warn_deprecated_options(self):
+        for old_option_name, new_option_name in [
+            ('geoip_database', 'geoip_city_db'),
+            ('osv_memory_age_limit', 'transient_age_limit')
+        ]:
+            deprecated_value = self.options.pop(old_option_name, None)
+            if deprecated_value:
+                default_value = self.casts[new_option_name].my_default
+                current_value = self.options[new_option_name]
 
 config = configmanager()

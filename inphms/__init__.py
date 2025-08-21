@@ -20,9 +20,10 @@ SUPERUSER_ID = 1
 
 
 # from . import addons
+# from . import service
 from . import release
 from . import tools
-# from . import service
+from . import netsvc
 
 
 from . import cli
