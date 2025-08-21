@@ -12,7 +12,7 @@ class Command:
         commands[cls.name] = cls
 
 INPHMS_HELP = """\
-Inphms CLI, use 'inphms_bin' --help' for regular server options.
+Inphms CLI, use '{inphms_bin}' --help' for regular server options.
 
 Available commands:
     {command_list}
@@ -40,6 +40,8 @@ def main():
         args = args[1:]
     
     command = "server"
+
+
 
     if command in commands:
         i = commands[command]()

@@ -11,6 +11,7 @@ GNU Public License
 """
 
 import atexit, csv, logging, os, re, sys
+
 from pathlib import Path
 from psycopg2.errors import InsufficientPrivilege
 
@@ -21,7 +22,7 @@ from . import Command
 __author__ = inphms.release.author
 __version__ = inphms.release.version
 
-_logger = loogging.getLogger('inphms')
+_logger = logging.getLogger('inphms')
 
 re._MAXCACHE = 4096
 

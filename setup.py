@@ -24,6 +24,7 @@ setup(
         'werkzeug',
         'jinja2',
         'psycopg2 >= 2.2',
+        'passlib',
     ],
     python_requires='>=3.10',
     extras_require={

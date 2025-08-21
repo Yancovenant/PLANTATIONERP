@@ -22,3 +22,6 @@ SUPERUSER_ID = 1
 # from . import addons
 from . import release
 # from . import service
+
+
+from . import cli
