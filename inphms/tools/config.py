@@ -104,5 +104,25 @@ class configmanager(object):
             if deprecated_value:
                 default_value = self.casts[new_option_name].my_default
                 current_value = self.options[new_option_name]
+                if deprecated_value in (current_value, default_value):
+                    pass
+                elif current_value == default_value:
+                    # deprecated_value != current_value == default_value
+                    # assume the new option was not set
+                    self.options[new_option_name] = deprecated_value
+                    warnings.warn(
+                        f"The {old_option_name!r} option found in the "
+                        "configuration file is a deprecated alias to "
+                        f"{new_option_name!r}, please use the latter.",
+                        DeprecationWarning)
+                else:
+                    # deprecated_value != current_value != default_value
+                    self.parser.error(
+                        f"The two options {old_option_name!r} "
+                        "(found in the configuration file but "
+                        f"deprecated) and {new_option_name!r} are set "
+                        "to different values. Please remove the first "
+                        "one and make sure the second is correct."
+                    )
 
 config = configmanager()
