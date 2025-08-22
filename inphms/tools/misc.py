@@ -116,3 +116,79 @@ def file_open(name: str, mode: str = "r", filter_ext: tuple[str, ...] = (), env:
             return open(path, mode, encoding="utf-8")
         return open(path, mode)
     raise FileNotFoundError("Not a file: " + name)
+
+def reverse_enumerate(lst: Sequence[T]) -> Iterator[tuple[int, T]]:
+    """Like enumerate but in the other direction
+
+    Usage::
+
+        >>> a = ['a', 'b', 'c']
+        >>> it = reverse_enumerate(a)
+        >>> it.next()
+        (2, 'c')
+        >>> it.next()
+        (1, 'b')
+        >>> it.next()
+        (0, 'a')
+        >>> it.next()
+        Traceback (most recent call last):
+          File "<stdin>", line 1, in <module>
+        StopIteration
+    """
+    return zip(range(len(lst) - 1, -1, -1), reversed(lst))
+
+class Callbacks:
+    """ A simple queue of callback functions.  Upon run, every function is
+    called (in addition order), and the queue is emptied.
+
+    ::
+
+        callbacks = Callbacks()
+
+        # add foo
+        def foo():
+            print("foo")
+
+        callbacks.add(foo)
+
+        # add bar
+        callbacks.add
+        def bar():
+            print("bar")
+
+        # add foo again
+        callbacks.add(foo)
+
+        # call foo(), bar(), foo(), then clear the callback queue
+        callbacks.run()
+
+    The queue also provides a ``data`` dictionary, that may be freely used to
+    store anything, but is mostly aimed at aggregating data for callbacks.  The
+    dictionary is automatically cleared by ``run()`` once all callback functions
+    have been called.
+
+    ::
+
+        # register foo to process aggregated data
+        @callbacks.add
+        def foo():
+            print(sum(callbacks.data['foo']))
+
+        callbacks.data.setdefault('foo', []).append(1)
+        ...
+        callbacks.data.setdefault('foo', []).append(2)
+        ...
+        callbacks.data.setdefault('foo', []).append(3)
+
+        # call foo(), which prints 6
+        callbacks.run()
+
+    Given the global nature of ``data``, the keys should identify in a unique
+    way the data being stored.  It is recommended to use strings with a
+    structure like ``"{module}.{feature}"``.
+    """
+    __slots__ = ['_funcs', 'data']
+
+    def __init__(self):
+        self._funcs: collections.deque[Callable] = collections.deque()
+        self.data = {}

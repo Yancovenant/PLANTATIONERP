@@ -27,6 +27,7 @@ from . import netsvc
 from . import modules
 from . import addons
 from . import service
+from . import sql_db
 
 ## OTHER IMPORT REQUIRED
 from . import cli

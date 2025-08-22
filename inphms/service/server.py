@@ -221,6 +221,19 @@ class CommonServer(object):
         self.port = config['http_port']
         # runtime
         self.pid = os.getpid()
+    
+    @classmethod
+    def on_stop(cls, func):
+        """ Register a cleanup function to be executed when the server stops """
+        cls._on_stop_funcs.append(func)
+        
+    def stop(self):
+        for func in self._on_stop_funcs:
+            try:
+                _logger.debug("on_close call %s", func)
+                func()
+            except Exception:
+                _logger.warning("Exception in %s", func.__name__, exc_info=True)
 
 class ThreadedServer(CommonServer):
     def __init__(self, app):
@@ -461,6 +474,27 @@ class ThreadedServer(CommonServer):
         else:
             self.limit_reached_time = None
     
+    def signal_handler(self, sig, frame):
+        if sig in [signal.SIGINT, signal.SIGTERM]:
+            # shutdown on kill -INT or -TERM
+            self.quit_signals_received += 1
+            if self.quit_signals_received > 1:
+                # logging.shutdown was already called at this point.
+                sys.stderr.write("Forced shutdown.\n")
+                os._exit(0)
+            # interrupt run() to start shutdown
+            raise KeyboardInterrupt()
+        elif hasattr(signal, 'SIGXCPU') and sig == signal.SIGXCPU:
+            sys.stderr.write("CPU time limit exceeded! Shutting down immediately\n")
+            sys.stderr.flush()
+            os._exit(0)
+        elif sig == signal.SIGHUP:
+            # restart on kill -HUP
+            global server_phoenix  # noqa: PLW0603
+            server_phoenix = True
+            self.quit_signals_received += 1
+            # interrupt run() to start shutdown
+            raise KeyboardInterrupt()
 
 
 #----------------------------------------------------------
