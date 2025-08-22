@@ -22,7 +22,7 @@ def patch_evented():
         """A wait callback useful to allow gevent to work with Psycopg."""
         # Copyright (C) 2010-2012 Daniele Varrazzo <daniele.varrazzo@gmail.com>
         # This function is borrowed from psycogreen module which is licensed
-        # under the BSD license (see in odoo/debian/copyright)
+        # under the BSD license (see in inphms/debian/copyright)
         while 1:
             state = conn.poll()
             if state == psycopg2.extensions.POLL_OK:

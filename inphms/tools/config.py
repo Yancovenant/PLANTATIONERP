@@ -82,7 +82,7 @@ class configmanager(object):
         group = optparse.OptionGroup(parser, "Common options")
         group.add_option("-c", "--config", dest="config", help="specify alternate config file")
         group.add_option("-s", "--save", action="store_true", dest="save", default=False,
-                          help="save configuration to ~/.odoorc (or to ~/.openerp_serverrc if it exists)")
+                          help="save configuration to ~/.inphmsrc (or to ~/.inphms_serverrc if it exists)")
         group.add_option("-i", "--init", dest="init", help="install one or more modules (comma-separated list, use \"all\" for all modules), requires -d")
         group.add_option("-u", "--update", dest="update",
                           help="update one or more modules (comma-separated list, use \"all\" for all modules). Requires -d.")
@@ -104,7 +104,7 @@ class configmanager(object):
         group.add_option("--load", dest="server_wide_modules", help="Comma-separated list of server-wide modules.", my_default='base,web')
 
         group.add_option("-D", "--data-dir", dest="data_dir", my_default=_get_default_datadir(),
-                         help="Directory where to store Odoo data")
+                         help="Directory where to store Inphms data")
         parser.add_option_group(group)
 
         # HTTP
@@ -172,7 +172,7 @@ class configmanager(object):
         group.add_option("--screencasts", dest="screencasts", action="store", my_default=None,
                          metavar='DIR',
                          help="Screencasts will go in DIR/{db_name}/screencasts.")
-        temp_tests_dir = os.path.join(tempfile.gettempdir(), 'odoo_tests')
+        temp_tests_dir = os.path.join(tempfile.gettempdir(), 'inphms_tests')
         group.add_option("--screenshots", dest="screenshots", action="store", my_default=temp_tests_dir,
                          metavar='DIR',
                          help="Screenshots will go in DIR/{db_name}/screenshots. Defaults to %s." % temp_tests_dir)
@@ -182,9 +182,9 @@ class configmanager(object):
         group = optparse.OptionGroup(parser, "Logging Configuration")
         group.add_option("--logfile", dest="logfile", help="file where the server log will be stored")
         group.add_option("--syslog", action="store_true", dest="syslog", my_default=False, help="Send the log to the syslog server")
-        group.add_option('--log-handler', action="append", default=[], my_default=DEFAULT_LOG_HANDLER, metavar="PREFIX:LEVEL", help='setup a handler at LEVEL for a given PREFIX. An empty PREFIX indicates the root logger. This option can be repeated. Example: "odoo.orm:DEBUG" or "werkzeug:CRITICAL" (default: ":INFO")')
-        group.add_option('--log-web', action="append_const", dest="log_handler", const="odoo.http:DEBUG", help='shortcut for --log-handler=odoo.http:DEBUG')
-        group.add_option('--log-sql', action="append_const", dest="log_handler", const="odoo.sql_db:DEBUG", help='shortcut for --log-handler=odoo.sql_db:DEBUG')
+        group.add_option('--log-handler', action="append", default=[], my_default=DEFAULT_LOG_HANDLER, metavar="PREFIX:LEVEL", help='setup a handler at LEVEL for a given PREFIX. An empty PREFIX indicates the root logger. This option can be repeated. Example: "inphms.orm:DEBUG" or "werkzeug:CRITICAL" (default: ":INFO")')
+        group.add_option('--log-web', action="append_const", dest="log_handler", const="inphms.http:DEBUG", help='shortcut for --log-handler=inphms.http:DEBUG')
+        group.add_option('--log-sql', action="append_const", dest="log_handler", const="inphms.sql_db:DEBUG", help='shortcut for --log-handler=inphms.sql_db:DEBUG')
         group.add_option('--log-db', dest='log_db', help="Logging database", my_default=False)
         group.add_option('--log-db-level', dest='log_db_level', my_default='warning', help="Logging database level")
         # For backward-compatibility, map the old log levels to something
@@ -221,6 +221,7 @@ class configmanager(object):
                          help='specify the SSL private key used for authentication')
         parser.add_option_group(group)
 
+        # Database Group
         group = optparse.OptionGroup(parser, "Database related options")
         group.add_option("-d", "--database", dest="db_name", my_default=False,
                          help="specify the database name")
@@ -249,7 +250,7 @@ class configmanager(object):
         parser.add_option_group(group)
 
         group = optparse.OptionGroup(parser, "Internationalisation options",
-            "Use these options to translate Odoo to another language. "
+            "Use these options to translate Inphms to another language. "
             "See i18n section of the user manual. Option '-d' is mandatory. "
             "Option '-l' is mandatory in case of importation"
             )
@@ -410,21 +411,60 @@ class configmanager(object):
             "use -s/--save if you want to generate it"% opt.config)
         
         if os.name == 'nt':
-            rcfilepath = os.path.join(os.path.abspath(os.path.dirname(sys.argv[0])), 'odoo.conf')
+            rcfilepath = os.path.join(os.path.abspath(os.path.dirname(sys.argv[0])), 'inphms.conf')
         else:
-            rcfilepath = os.path.expanduser('~/.odoorc')
-            old_rcfilepath = os.path.expanduser('~/.openerp_serverrc')
+            rcfilepath = os.path.expanduser('~/.inphmsrc')
+            old_rcfilepath = os.path.expanduser('~/.inphms_serverrc')
 
             die(os.path.isfile(rcfilepath) and os.path.isfile(old_rcfilepath),
-                "Found '.odoorc' and '.openerp_serverrc' in your path. Please keep only one of "\
-                "them, preferably '.odoorc'.")
+                "Found '.inphmsrc' and '.inphms_serverrc' in your path. Please keep only one of "\
+                "them, preferably '.inphmsrc'.")
 
             if not os.path.isfile(rcfilepath) and os.path.isfile(old_rcfilepath):
                 rcfilepath = old_rcfilepath
 
         self.rcfile = os.path.abspath(
-            self.config_file or opt.config or os.environ.get('ODOO_RC') or os.environ.get('OPENERP_SERVER') or rcfilepath)
+            self.config_file or opt.config or os.environ.get('INPHMS_RC') or os.environ.get('INPHMS_SERVER') or rcfilepath)
         self.load()
+
+        # Verify that we want to log or not, if not the output will go to stdout
+        if self.options['logfile'] in ('None', 'False'):
+            self.options['logfile'] = False
+        # the same for the pidfile
+        if self.options['pidfile'] in ('None', 'False'):
+            self.options['pidfile'] = False
+        # the same for the test_tags
+        if self.options['test_tags'] == 'None':
+            self.options['test_tags'] = None
+        # and the server_wide_modules
+        if self.options['server_wide_modules'] in ('', 'None', 'False'):
+            self.options['server_wide_modules'] = 'base,web'
+        
+        # if defined do not take the configfile value even if the defined value is None
+        keys = ['gevent_port', 'http_interface', 'http_port', 'http_enable', 'x_sendfile',
+                'db_name', 'db_user', 'db_password', 'db_host', 'db_replica_host', 'db_sslmode',
+                'db_port', 'db_replica_port', 'db_template', 'logfile', 'pidfile', 'smtp_port',
+                'email_from', 'smtp_server', 'smtp_user', 'smtp_password', 'from_filter',
+                'smtp_ssl_certificate_filename', 'smtp_ssl_private_key_filename',
+                'db_maxconn', 'db_maxconn_gevent', 'import_partial', 'addons_path', 'upgrade_path', 'pre_upgrade_scripts',
+                'syslog', 'without_demo', 'screencasts', 'screenshots',
+                'dbfilter', 'log_level', 'log_db',
+                'log_db_level', 'geoip_city_db', 'geoip_country_db', 'dev_mode',
+                'shell_interface', 'limit_time_worker_cron',
+        ]
+
+        for arg in keys:
+            # Copy the command-line argument (except the special case for log_handler, due to
+            # action=append requiring a real default, so we cannot use the my_default workaround)
+            if getattr(opt, arg, None) is not None:
+                self.options[arg] = getattr(opt, arg)
+            # ... or keep, but cast, the config file value.
+            elif isinstance(self.options[arg], str) and self.casts[arg].type in optparse.Option.TYPE_CHECKER:
+                self.options[arg] = optparse.Option.TYPE_CHECKER[self.casts[arg].type](self.casts[arg], arg, self.options[arg])
+
+        if isinstance(self.options['log_handler'], str):
+            self.options['log_handler'] = self.options['log_handler'].split(',')
+        self.options['log_handler'].extend(opt.log_handler)
 
         # if defined but None take the configfile value
         keys = [
@@ -490,12 +530,33 @@ class configmanager(object):
             else ""
         )
 
+        self.options['init'] = opt.init and dict.fromkeys(opt.init.split(','), 1) or {}
+        self.options['demo'] = (dict(self.options['init'])
+                                if not self.options['without_demo'] else {})
+        self.options['update'] = opt.update and dict.fromkeys(opt.update.split(','), 1) or {}
+        self.options['translate_modules'] = opt.translate_modules and [m.strip() for m in opt.translate_modules.split(',')] or ['all']
+        self.options['translate_modules'].sort()
+
+        dev_split = [s.strip() for s in opt.dev_mode.split(',')] if opt.dev_mode else []
+        self.options['dev_mode'] = dev_split + (['reload', 'qweb', 'xml'] if 'all' in dev_split else [])
+
+        if opt.pg_path:
+            self.options['pg_path'] = opt.pg_path
+
+        self.options['test_enable'] = bool(self.options['test_tags'])
+
         if opt.save:
             self.save()
 
         for key in ['data_dir', 'logfile', 'pidfile', 'test_file', 'screencasts', 'screenshots', 'pg_path', 'translate_out', 'translate_in', 'geoip_city_db', 'geoip_country_db']:
             self.options[key] = self._normalize(self.options[key])
 
+        conf.addons_paths = self.options['addons_path'].split(',')
+
+        conf.server_wide_modules = [
+            m.strip() for m in self.options['server_wide_modules'].split(',') if m.strip()
+        ]
+        return opt
 
 
 

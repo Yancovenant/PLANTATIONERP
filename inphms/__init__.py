@@ -28,7 +28,9 @@ from . import modules
 from . import addons
 from . import service
 
+## OTHER IMPORT REQUIRED
 from . import cli
+from . import http
 
 ## MODEL CLASSES
 from . import api

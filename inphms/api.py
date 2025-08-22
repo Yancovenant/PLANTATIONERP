@@ -1,6 +1,6 @@
 # Part of Inphms, see License file for full copyright and licensing details.
 
-"""The Inphms API module defines Odoo Environments and method decorators.
+"""The Inphms API module defines Inphms Environments and method decorators.
 """
 
 __all__ = [

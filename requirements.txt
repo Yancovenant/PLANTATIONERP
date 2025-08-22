@@ -13,3 +13,4 @@ psycopg2==2.9.5 ; python_version == '3.11'
 psycopg2==2.9.9 ; python_version >= '3.12' and python_version < '3.13' # (Noble)
 psycopg2==2.9.10 ; python_version >= '3.13' # (Trixie)
 passlib==1.7.4 # min version = 1.7.2 (Focal with security backports)
+pypiwin32 ; sys_platform == 'win32'

@@ -268,7 +268,6 @@ def module_manifest(path):
         return None
     for manifest_name in MANIFEST_NAMES:
         candidate = opj(path, manifest_name)
-        print(manifest_name)
         if os.path.isfile(candidate):
             return candidate
 

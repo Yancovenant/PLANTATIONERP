@@ -5,6 +5,7 @@
 """
 
 from . import module
+from . import registry
 
 from inphms.modules.module import (
     initialize_sys_path,
