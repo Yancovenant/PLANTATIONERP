@@ -29,7 +29,7 @@ re._MAXCACHE = 4096
 def main(args):
     check_root_user()
     inphms.tools.config.parse_config(args, setup_logging=True)
-    check_mysql_user()
+    check_postgres_user()
     report_configuration()
 
     config = inphms.tools.config
@@ -77,14 +77,14 @@ def check_root_user():
         if getpass.getuser() == 'root':
             sys.stderr.write("Running as user 'root' is a security risk.\n")
 
-def check_mysql_user():
+def check_postgres_user():
     """ Exit if the configured database user is 'root'.
 
     This function assumes the configuration has been init
     """
     config = inphms.tools.config
-    if (config['db_user'] or os.environ.get('DBUSER')) == 'root':
-        sys.stderr.write("Using the database user 'root' is a security risk, aborting.")
+    if (config['db_user'] or os.environ.get('PGUSER')) == 'postgres':
+        sys.stderr.write("Using the database user 'postgres' is a security risk, aborting.")
         sys.exit(1)
 
 def report_configuration():
@@ -102,9 +102,9 @@ def report_configuration():
     if config.get('pre_upgrade_scripts'):
         _logger.info('extra upgrade scripts: %s', config['pre_upgrade_scripts'])
 
-    host = config['db_host'] or os.environ.get('DBHOST', 'default')
-    port = config['db_port'] or os.environ.get('DBPORT', 'default')
-    user = config['db_user'] or os.environ.get('DBUSER', 'default')
+    host = config['db_host'] or os.environ.get('PGHOST', 'default')
+    port = config['db_port'] or os.environ.get('PGPORT', 'default')
+    user = config['db_user'] or os.environ.get('PGUSER', 'default')
 
     _logger.info('database: %s@%s:%s', user, host, port)
     replica_host = config['db_replica_host']
