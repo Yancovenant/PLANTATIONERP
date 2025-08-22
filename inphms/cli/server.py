@@ -33,6 +33,35 @@ def main(args):
     report_configuration()
 
     config = inphms.tools.config
+    csv.field_size_limit(500 * 1024 * 1024)
+    preload = []
+    if config['db_name']:
+        preload = config['db_name'].split(',')
+        for db_name in preload:
+            try:
+                odoo.service.db._create_empty_database(db_name)
+                config['init']['base'] = True
+            except InsufficientPrivilege as err:
+                # We use an INFO loglevel on purpose in order to avoid
+                # reporting unnecessary warnings on build environment
+                # using restricted database access.
+                _logger.info("Could not determine if database %s exists, "
+                             "skipping auto-creation: %s", db_name, err)
+            except odoo.service.db.DatabaseExists:
+                pass
+    if config["translate_out"]:
+        export_translation()
+        sys.exit(0)
+
+    if config["translate_in"]:
+        import_translation()
+        sys.exit(0)
+
+    stop = config["stop_after_init"]
+
+    setup_pid_file()
+    rc = odoo.service.server.start(preload=preload, stop=stop)
+    sys.exit(rc)
 
 class Server(Command):
     """Start the inphms server (default command)"""
