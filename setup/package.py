@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Part of Inphms, see License file for full copyright and licensing details.
 
 import os, logging

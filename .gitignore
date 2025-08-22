@@ -1,2 +1,4 @@
 # Git Ignore
 __pycache__
+**/*.egg-info
+**/build

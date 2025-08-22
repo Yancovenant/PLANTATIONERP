@@ -4,6 +4,9 @@ import os
 import sys
 from pathlib import Path
 
+import inphms
+from inphms.modules import initialize_sys_path, get_modules, get_module_path
+
 commands = {}
 class Command:
     name = None
@@ -41,7 +44,15 @@ def main():
     
     command = "server"
 
-
+    if len(args) and not args[0].startswith("-"):
+        logging.disable(logging.CRITICAL)
+        initialize_sys_path()
+        for module in get_modules():
+            if (Path(get_module_path(module)) / 'cli').is_dir():
+                __import__('inphms.addons.' + module)
+        logging.disable(logging.NOTSET)
+        command = args[0]
+        args = args[1:]
 
     if command in commands:
         i = commands[command]()

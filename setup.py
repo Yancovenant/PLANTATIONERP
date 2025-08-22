@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Coding - utf-8
 
 from setuptools import setup, find_packages

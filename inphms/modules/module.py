@@ -17,14 +17,279 @@ from os.path import join as opj, normpath
 import inphms
 import inphms.tools as tools
 import inphms.release as release
+from inphms.tools.misc import file_path
+
+
+
+MANIFEST_NAMES = ('__manifest__.py',)
+README = ['README.rst', 'README.md', 'README.txt']
+
+_DEFAULT_MANIFEST = {
+    #addons_path: f'/path/to/the/addons/path/of/{module}',  # automatic
+    'application': False,
+    'bootstrap': False,  # web
+    'assets': {},
+    'author': 'Inphms Team.',
+    'auto_install': False,
+    'category': 'Uncategorized',
+    'cloc_exclude': [],
+    'configurator_snippets': {},  # website themes
+    'countries': [],
+    'data': [],
+    'demo': [],
+    'demo_xml': [],
+    'depends': [],
+    'description': '',
+    'external_dependencies': {},
+    #icon: f'/{module}/static/description/icon.png',  # automatic
+    'init_xml': [],
+    'installable': True,
+    'images': [],  # website
+    'images_preview_theme': {},  # website themes
+    #license, mandatory
+    'live_test_url': '',  # website themes
+    'new_page_templates': {},  # website themes
+    #name, mandatory
+    'post_init_hook': '',
+    'post_load': '',
+    'pre_init_hook': '',
+    'sequence': 100,
+    'summary': '',
+    'test': [],
+    'update_xml': [],
+    'uninstall_hook': '',
+    'version': '1.0',
+    'web': False,
+    'website': '',
+}
+
+# matches field definitions like
+#     partner_id: base.ResPartner = fields.Many2one
+#     partner_id = fields.Many2one[base.ResPartner]
+TYPED_FIELD_DEFINITION_RE = re.compile(r'''
+    \b (?P<field_name>\w+) \s*
+    (:\s*(?P<field_type>[^ ]*))? \s*
+    = \s*
+    fields\.(?P<field_class>Many2one|One2many|Many2many)
+    (\[(?P<type_param>[^\]]+)\])?
+''', re.VERBOSE)
 
 _logger = logging.getLogger(__name__)
+
 
 def initialize_sys_path():
     """
     Setup the addons path ``inphms.addons.__path__`` with various defaults
     and explicit directories.
     """
+    # hook inphms.addons on data dir
     dd = os.path.normcase(tools.config.addons_data_dir)
     if os.access(dd, os.R_OK) and dd not in inphms.addons.__path__:
         inphms.addons.__path__.append(dd)
+
+    # hook inphms.addons on addons paths
+    for ad in tools.config['addons_path'].split(','):
+        ad = os.path.normcase(os.path.abspath(ad.strip()))
+        if ad not in inphms.addons.__path__:
+            inphms.addons.__path__.append(ad)
+    
+    # hook inphms.addons on base module path
+    base_path = os.path.normcase(os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'addons')))
+    if base_path not in inphms.addons.__path__ and os.path.isdir(base_path):
+        inphms.addons.__path__.append(base_path)
+
+def load_inphms_module(module_name):
+    """ Load an Inphms module, if not already loaded.
+
+    This loads the module and register all of its models, thanks to either
+    the MetaModel metaclass, or the explicit instantiation of the model.
+    This is also used to load server-wide module (i.e. it is also used
+    when there is no model to register).
+    """
+
+    qualname = f'inphms.addons.{module_name}'
+    if qualname in sys.modules:
+        return
+
+    try:
+        __import__(qualname)
+
+        # Call the module's post-load hook. This can done before any model or
+        # data has been initialized. This is ok as the post-load hook is for
+        # server-wide (instead of registry-specific) functionalities.
+        info = get_manifest(module_name)
+        if info['post_load']:
+            getattr(sys.modules[qualname], info['post_load'])()
+
+    except AttributeError as err:
+        _logger.critical("Couldn't load module %s", module_name)
+        trace = traceback.format_exc()
+        match = TYPED_FIELD_DEFINITION_RE.search(trace)
+        if match and "most likely due to a circular import" in trace:
+            field_name = match['field_name']
+            field_class = match['field_class']
+            field_type = match['field_type'] or match['type_param']
+            if "." not in field_type:
+                field_type = f"{module_name}.{field_type}"
+            raise AttributeError(
+                f"{err}\n"
+                "To avoid circular import for the the comodel use the annotation syntax:\n"
+                f"    {field_name}: {field_type} = fields.{field_class}(...)\n"
+                "and add at the beggining of the file:\n"
+                "    from __future__ import annotations"
+            ).with_traceback(err.__traceback__) from None
+        raise
+    except Exception:
+        _logger.critical("Couldn't load module %s", module_name)
+        raise
+
+def get_modules():
+    """Returns the list of module names
+    """
+    def listdir(dir):
+        def clean(name):
+            name = os.path.basename(name)
+            if name[-4:] == '.zip':
+                name = name[:-4]
+            return name
+
+        def is_really_module(name):
+            for mname in MANIFEST_NAMES:
+                if os.path.isfile(opj(dir, name, mname)):
+                    return True
+        return [
+            clean(it)
+            for it in os.listdir(dir)
+            if is_really_module(it)
+        ]
+
+    plist = []
+    for ad in inphms.addons.__path__:
+        if not os.path.exists(ad):
+            _logger.warning("addons path does not exist: %s", ad)
+            continue
+        plist.extend(listdir(ad))
+    return sorted(set(plist))
+
+def get_module_path(module, downloaded=False, display_warning=True):
+    """Return the path of the given module.
+
+    Search the addons paths and return the first path where the given
+    module is found. If downloaded is True, return the default addons
+    path if nothing else is found.
+
+    """
+    if re.search(r"[\/\\]", module):
+        return False
+    for adp in inphms.addons.__path__:
+        files = [opj(adp, module, manifest) for manifest in MANIFEST_NAMES] +\
+                [opj(adp, module + '.zip')]
+        if any(os.path.exists(f) for f in files):
+            return opj(adp, module)
+
+    if downloaded:
+        return opj(tools.config.addons_data_dir, module)
+    if display_warning:
+        _logger.warning('module %s: module not found', module)
+    return False
+
+def get_manifest(module, mod_path=None):
+    """
+    Get the module manifest.
+
+    :param str module: The name of the module (sale, purchase, ...).
+    :param Optional[str] mod_path: The optional path to the module on
+        the file-system. If not set, it is determined by scanning the
+        addons-paths.
+    :returns: The module manifest as a dict or an empty dict
+        when the manifest was not found.
+    :rtype: dict
+    """
+    return copy.deepcopy(_get_manifest_cached(module, mod_path))
+
+@functools.lru_cache(maxsize=None)
+def _get_manifest_cached(module, mod_path=None):
+    return load_manifest(module, mod_path)
+
+def load_manifest(module, mod_path=None):
+    """ Load the module manifest from the file system. """
+    if not mod_path:
+        mod_path = get_module_path(module, downloaded=True)
+    manifest_file = module_manifest(mod_path)
+    if not manifest_file:
+        _logger.debug('module %s: no manifest file found %s', module, MANIFEST_NAMES)
+        return {}
+
+    manifest = copy.deepcopy(_DEFAULT_MANIFEST)
+
+    manifest['icon'] = get_module_icon(module)
+
+    with tools.file_open(manifest_file, mode='r') as f:
+        manifest.update(ast.literal_eval(f.read()))
+
+    if not manifest['description']:
+        readme_path = [opj(mod_path, x) for x in README
+                       if os.path.isfile(opj(mod_path, x))]
+        if readme_path:
+            with tools.file_open(readme_path[0]) as fd:
+                manifest['description'] = fd.read()
+
+    if not manifest.get('license'):
+        manifest['license'] = 'LGPL-3'
+        _logger.warning("Missing `license` key in manifest for %r, defaulting to LGPL-3", module)
+
+    # auto_install is either `False` (by default) in which case the module
+    # is opt-in, either a list of dependencies in which case the module is
+    # automatically installed if all dependencies are (special case: [] to
+    # always install the module), either `True` to auto-install the module
+    # in case all dependencies declared in `depends` are installed.
+    if isinstance(manifest['auto_install'], collections.abc.Iterable):
+        manifest['auto_install'] = set(manifest['auto_install'])
+        non_dependencies = manifest['auto_install'].difference(manifest['depends'])
+        assert not non_dependencies,\
+            "auto_install triggers must be dependencies, found " \
+            "non-dependencies [%s] for module %s" % (
+                ', '.join(non_dependencies), module
+            )
+    elif manifest['auto_install']:
+        manifest['auto_install'] = set(manifest['depends'])
+
+    try:
+        manifest['version'] = adapt_version(manifest['version'])
+    except ValueError as e:
+        if manifest.get("installable", True):
+            raise ValueError(f"Module {module}: invalid manifest") from e
+    manifest['addons_path'] = normpath(opj(mod_path, os.pardir))
+    return manifest
+
+def module_manifest(path):
+    """Returns path to module manifest if one can be found under `path`, else `None`."""
+    if not path:
+        return None
+    for manifest_name in MANIFEST_NAMES:
+        candidate = opj(path, manifest_name)
+        print(manifest_name)
+        if os.path.isfile(candidate):
+            return candidate
+
+def get_module_icon(module):
+    fpath = f"{module}/static/description/icon.png"
+    try:
+        file_path(fpath)
+        return "/" + fpath
+    except FileNotFoundError:
+        return "/base/static/description/icon.png"
+
+def adapt_version(version):
+    serie = release.major_version
+    if version == serie or not version.startswith(serie + '.'):
+        base_version = version
+        version = '%s.%s' % (serie, version)
+    else:
+        base_version = version[len(serie) + 1:]
+
+    if not re.match(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$", base_version):
+        raise ValueError(f"Invalid version {base_version!r}. Modules should have a version in format `x.y`, `x.y.z`,"
+                         f" `{serie}.x.y` or `{serie}.x.y.z`.")
+
+    return version

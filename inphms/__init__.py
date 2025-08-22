@@ -18,13 +18,17 @@ assert sys.version_info > MIN_PY_VERSION, f"Outdated python version detected, In
 
 SUPERUSER_ID = 1
 
+from . import _monkeypatches
 
 # from . import addons
-# from . import service
 from . import release
 from . import tools
 from . import netsvc
 from . import modules
 from . import addons
+from . import service
 
 from . import cli
+
+## MODEL CLASSES
+from . import api

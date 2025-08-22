@@ -39,7 +39,7 @@ def main(args):
         preload = config['db_name'].split(',')
         for db_name in preload:
             try:
-                odoo.service.db._create_empty_database(db_name)
+                inphms.service.db._create_empty_database(db_name)
                 config['init']['base'] = True
             except InsufficientPrivilege as err:
                 # We use an INFO loglevel on purpose in order to avoid
@@ -47,7 +47,7 @@ def main(args):
                 # using restricted database access.
                 _logger.info("Could not determine if database %s exists, "
                              "skipping auto-creation: %s", db_name, err)
-            except odoo.service.db.DatabaseExists:
+            except inphms.service.db.DatabaseExists:
                 pass
     if config["translate_out"]:
         export_translation()
@@ -60,7 +60,7 @@ def main(args):
     stop = config["stop_after_init"]
 
     setup_pid_file()
-    rc = odoo.service.server.start(preload=preload, stop=stop)
+    rc = inphms.service.server.start(preload=preload, stop=stop)
     sys.exit(rc)
 
 class Server(Command):
@@ -117,3 +117,23 @@ def report_configuration():
             '.'.join(map(str, sys.version_info[:2])),
             '.'.join(map(str, inphms.MAX_PY_VERSION))
         )
+
+def setup_pid_file():
+    """ Create a file with the process id written in it.
+
+    This function assumes the configuration has been initialized.
+    """
+    config = inphms.tools.config
+    if not inphms.evented and config['pidfile']:
+        pid = os.getpid()
+        with open(config['pidfile'], 'w') as fd:
+            fd.write(str(pid))
+        atexit.register(rm_pid_file, pid)
+
+def rm_pid_file(main_pid):
+    config = inphms.tools.config
+    if config['pidfile'] and main_pid == os.getpid():
+        try:
+            os.unlink(config['pidfile'])
+        except OSError:
+            pass
