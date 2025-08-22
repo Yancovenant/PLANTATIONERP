@@ -24,6 +24,7 @@ SUPERUSER_ID = 1
 from . import release
 from . import tools
 from . import netsvc
-
+from . import modules
+from . import addons
 
 from . import cli
