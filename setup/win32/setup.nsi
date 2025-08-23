@@ -155,6 +155,7 @@ Page Custom ShowProxyTokenDialogPage
 !insertmacro MUI_UNPAGE_FINISH
 
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "Indonesian"
 !insertmacro MUI_RESERVEFILE_LANGDLL
 
 ; English
@@ -182,6 +183,32 @@ LangString TITLE_Nginx ${LANG_ENGLISH} "Nginx WebServer"
 LangString TITLE_Ghostscript ${LANG_ENGLISH} "Ghostscript interpreter"
 LangString DESC_FinishPageText ${LANG_ENGLISH} "Start Inphms"
 LangString UnsafeDirText ${LANG_ENGLISH} "Installing outside of $PROGRAMFILES64 is not recommended.$\nDo you want to continue ?"
+
+; Indonesian
+LangString DESC_Inphms_Server ${LANG_INDONESIAN} "Install Server Inphms dengan semua modul standar Inphms."
+LangString DESC_PostgreSQL ${LANG_INDONESIAN} "Install PostgreSQL RDBMS yang digunakan oleh Inphms."
+LangString DESC_FinishPage_Link ${LANG_INDONESIAN} "Hubungi Inphms untuk Kerjasama dan/atau Dukungan"
+LangString DESC_AtLeastOneComponent ${LANG_INDONESIAN} "Anda harus memilih setidaknya satu komponen"
+LangString DESC_CanNotInstallPostgreSQL ${LANG_INDONESIAN} "Anda tidak dapat menginstal database PostgreSQL tanpa Server Inphms"
+LangString WARNING_HostNameIsEmpty ${LANG_INDONESIAN} "Nama host untuk koneksi ke Server PostgreSQL kosong"
+LangString WARNING_UserNameIsEmpty ${LANG_INDONESIAN} "Nama pengguna untuk koneksi ke Server PostgreSQL kosong"
+LangString WARNING_PasswordIsEmpty ${LANG_INDONESIAN} "Kata sandi untuk koneksi ke Server PostgreSQL kosong"
+LangString WARNING_PortIsWrong ${LANG_INDONESIAN} "Port untuk koneksi ke Server PostgreSQL salah (default: 5432)"
+LangString DESC_PostgreSQLPage ${LANG_INDONESIAN} "Konfigurasi informasi untuk koneksi PostgreSQL"
+LangString DESC_PostgreSQL_Hostname ${LANG_INDONESIAN} "Nama host"
+LangString DESC_PostgreSQL_Port ${LANG_INDONESIAN} "Port"
+LangString DESC_PostgreSQL_Username ${LANG_INDONESIAN} "Nama pengguna"
+LangString DESC_PostgreSQL_Password ${LANG_INDONESIAN} "Kata sandi"
+LangString Profile_AllInOne ${LANG_INDONESIAN} "Server Inphms dan Server PostgreSQL"
+LangString Profile_Server ${LANG_INDONESIAN} "Server Inphms Saja"
+LangString Profile_IOT ${LANG_INDONESIAN} "Inphms IoT"
+LangString TITLE_Inphms_Server ${LANG_INDONESIAN} "Server Inphms"
+LangString TITLE_PostgreSQL ${LANG_INDONESIAN} "Database PostgreSQL"
+LangString TITLE_IOT ${LANG_INDONESIAN} "Inphms IoT"
+LangString TITLE_Nginx ${LANG_INDONESIAN} "Nginx WebServer"
+LangString TITLE_Ghostscript ${LANG_INDONESIAN} "Ghostscript interpreter"
+LangString DESC_FinishPageText ${LANG_INDONESIAN} "Mulai Inphms"
+LangString UnsafeDirText ${LANG_INDONESIAN} "Menginstal di luar $PROGRAMFILES64 tidak disarankan.$\nApakah Anda ingin melanjutkan ?"
 
 InstType /NOCUSTOM
 InstType $(Profile_AllInOne)
