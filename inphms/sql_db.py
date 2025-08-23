@@ -107,7 +107,9 @@ def connection_info_for(db_or_uri, readonly=False):
             cfg = tools.config.get('db_replica_' + p, cfg)
         if cfg:
             connection_info[p] = cfg
-
+    print(connection_info, 'connection_info')
+    print(db_or_uri, 'db_or_uri')
+    print(tools.config['db_name'], 'tools.config')
     return db_or_uri, connection_info
 
 _Pool = None

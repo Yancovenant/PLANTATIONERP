@@ -51,6 +51,19 @@ def _get_default_datadir():
     # No "version" kwarg as session and filestore paths are shared against series
     return func(appname=release.product_name, appauthor=release.author)
 
+def _deduplicate_loggers(loggers):
+    """ Avoid saving multiple logging levels for the same loggers to a save
+    file, that just takes space and the list can potentially grow unbounded
+    if for some odd reason people use :option`--save`` all the time.
+    """
+    # dict(iterable) -> the last item of iterable for any given key wins,
+    # which is what we want and expect. Output order should not matter as
+    # there are no duplicates within the output sequence
+    return (
+        '{}:{}'.format(logger, level)
+        for logger, level in dict(it.split(':') for it in loggers).items()
+    )
+
 class configmanager(object):
     def __init__(self, fname=None):
         """Constructor.
@@ -63,8 +76,13 @@ class configmanager(object):
             'admin_pwd': 'supervisor',
             'root_path': None,
         }
-        
 
+        # Not exposed in the configuration file.
+        self.blacklist_for_save = set([
+            'publisher_warranty_url', 'load_language', 'root_path',
+            'init', 'save', 'config', 'update', 'stop_after_init', 'dev_mode', 'shell_interface',
+        ])
+        
         self.casts = {}
 
         self.misc = {}

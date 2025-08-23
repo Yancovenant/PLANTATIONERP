@@ -316,8 +316,8 @@ Section $(TITLE_Nginx) Nginx
     FindClose $0
     File "conf\nginx\nginx.conf"
     # Temporary certs for the first start
-    File "..\..\inphms\addons\point_of_sale\tools\posbox\overwrite_after_init\etc\ssl\certs\nginx-cert.crt"
-    File "..\..\inphms\addons\point_of_sale\tools\posbox\overwrite_after_init\etc\ssl\private\nginx-cert.key"
+    # File "..\..\inphms\addons\point_of_sale\tools\posbox\overwrite_after_init\etc\ssl\certs\nginx-cert.crt"
+    # File "..\..\inphms\addons\point_of_sale\tools\posbox\overwrite_after_init\etc\ssl\private\nginx-cert.key"
 SectionEnd
 
 Section $(TITLE_Ghostscript) SectionGhostscript
@@ -348,7 +348,7 @@ Section -Post
     WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion" "${MAJOR_VERSION}.${MINOR_VERSION}"
     WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "Publisher" "${PUBLISHER}"
     WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "HelpLink" "support@inphms.com"
-    WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "HelpTelephone" "+32.81.81.37.00"
+    WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "HelpTelephone" "+62.85.69.56.46.36.5"
     WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "URLInfoAbout" "https://www.inphms.com"
     WriteRegStr HKLM       "${UNINSTALL_REGISTRY_KEY}" "Contact" "sales@inphms.com"
     WriteRegDWORD HKLM     "${UNINSTALL_REGISTRY_KEY}" "NoModify" "1"

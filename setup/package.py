@@ -68,15 +68,23 @@ def publish(args, pub_type, extensions):
     :returns: published files
     """
     def _publish(release):
+        print("appending publish", release)
         build_path = os.path.join(args.build_dir, release)
+        print(build_path, 'build_path')
         filename = release.split(os.path.sep)[-1]
+        print(filename, 'filename')
         release_dir = os.path.join(args.pub, pub_type)
+        print(release_dir, 'release_dir')
         release_path = os.path.join(release_dir, filename)
+        print(release_path, 'release_path')
         os.renames(build_path, release_path)
+        print(release_path, 'release_path')
 
         # Latest/symlink handler
         release_abspath = os.path.abspath(release_path)
         latest_abspath = release_abspath.replace(TSTAMP, 'latest')
+        print(release_abspath, 'release_abspath')
+        print(latest_abspath, 'latest_abspath')
         if os.name == 'nt':
             if os.path.exists(latest_abspath):
                 if os.path.islink(latest_abspath):
@@ -94,8 +102,11 @@ def publish(args, pub_type, extensions):
     published = []
     for extension in extensions:
         release = glob("%s/inphms_*.%s" % (args.build_dir, extension))
+        print(release, 'release')
         if release:
+            print(release[0], 'release[0]')
             published.append(_publish(release[0]))
+    print(published, 'published')
     return published
 
 def _prepare_build_dir(args, win32=False, move_addons=True):
@@ -164,10 +175,56 @@ class Docker():
         shutil.copy(os.path.join(self.args.build_dir, 'requirements.txt'), self.docker_dir)
         run_cmd(["docker", "build", "--rm=True", "-t", self.tag, "."], chdir=self.docker_dir, timeout=1200).check_returncode()
         shutil.rmtree(self.docker_dir)
+    
+    def build(self):
+        """To be overriden by specific builder"""
+        pass
+
+    def start_test(self):
+        """To be overriden by specific builder"""
+        pass
+
+    def run(self, cmd, build_dir, container_name, user='inphms', exposed_port=None, detach=False, timeout=None):
+        self.container_name = container_name
+        docker_cmd = [
+            "docker",
+            "run",
+            "--user=%s" % user,
+            "--name=%s" % container_name,
+            "--rm",
+            "--volume=%s:/data/src" % build_dir
+        ]
+
+        if exposed_port:
+            docker_cmd.extend(['-p', '127.0.0.1:%s:%s' % (exposed_port, exposed_port)])
+            self.exposed_port = exposed_port
+        if detach:
+            docker_cmd.append('-d')
+            # preserve logs in case of detached docker container
+            cmd = '(%s) > %s 2>&1' % (cmd, self.test_log_file)
+
+        docker_cmd.extend([
+            self.tag,
+            "/bin/bash",
+            "-c",
+            "cd /data/src && %s" % cmd
+        ])
+        run_cmd(docker_cmd, timeout=timeout).check_returncode()
+
+    def is_running(self):
+        dinspect = subprocess.run(['docker', 'container', 'inspect', self.container_name], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        return True if dinspect.returncode == 0 else False
+
+    def stop(self):
+        run_cmd(["docker", "stop", self.container_name]).check_returncode()
 
 class DockerWine(Docker):
     """Docker class to build Windows package"""
     arch = 'win'
+
+    def build_image(self):
+        shutil.copy(os.path.join(self.args.build_dir, 'setup/win32/requirements-local-proxy.txt'), self.docker_dir)
+        super().build_image()
 
     def build(self):
         logging.info('Start building windows package')

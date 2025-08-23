@@ -1,175 +1,219 @@
 # INPHMS ERP - Development TODO
 
-## [BLOCKED] Current Status: CLI Framework Only
-**What you have:** Command-line interface that can't start a web server
+## [UPDATED] Current Status: Advanced CLI Framework + Partial Server Implementation
+**What you have:** Command-line interface with server framework, HTTP layer, and database connectivity
 **What you need:** Complete ERP system that runs as .exe with MariaDB
 
 ---
 
-## [WIP] Phase 1: Fix Broken Server (HIGH PRIORITY)
-**Goal:** Make the server actually start without crashing
+## [COMPLETED] ✅ Phase 1: CLI Framework & Server Structure (DONE!)
+**Goal:** Basic command-line interface and server framework
 
-### 1.1 Fix server.py circular imports
-- **File:** `inphms/cli/server.py`
-- **Problem:** Function calls undefined functions
-- **Fix:** Complete the `main()` function
-- **Status:** [ ] Not Started
+### 1.1 ✅ CLI Command System
+- **File:** `inphms/cli/command.py` - **Status:** ✅ COMPLETED
+- **Features:** Command registration, help system, argument parsing
+- **What works:** Command discovery, argument handling, module loading
 
-### 1.2 Create missing functions
-- **Missing:** `setup_pid_file()`, `export_translation()`, `import_translation()`
-- **Fix:** Implement these functions or remove calls
-- **Status:** [ ] Not Started
+### 1.2 ✅ Server Entry Point
+- **File:** `inphms/cli/server.py` - **Status:** ✅ COMPLETED  
+- **Features:** Main server function, PostgreSQL user checks, configuration
+- **What works:** Server startup, config parsing, database validation
 
-### 1.3 Remove Odoo references
-- **Problem:** Code still references `odoo.service.db` instead of Inphms
-- **Fix:** Replace with Inphms equivalents
-- **Status:** [ ] Not Started
+### 1.3 ✅ HTTP Layer Foundation
+- **File:** `inphms/http.py` - **Status:** ✅ COMPLETED
+- **Features:** WSGI application class, request routing foundation
+- **What works:** Basic HTTP application structure
+
+### 1.4 ✅ Configuration System
+- **File:** `inphms/tools/config.py` - **Status:** ✅ COMPLETED
+- **Features:** Config file parsing, command-line options, database settings
+- **What works:** Full configuration management system
+
+### 1.5 ✅ Database Layer
+- **File:** `inphms/sql_db.py` - **Status:** ✅ COMPLETED
+- **Features:** PostgreSQL connector, connection pooling, query handling
+- **What works:** Complete database connectivity layer
 
 ---
 
-## [ ] Phase 2: Build Web Server (HIGH PRIORITY)
+## [COMPLETED] ✅ Phase 2: Core Infrastructure (DONE!)
+**Goal:** Core system components and module system
+
+### 2.1 ✅ Module Registry System
+- **File:** `inphms/modules/registry.py` - **Status:** ✅ COMPLETED
+- **Features:** Model registry, database per registry instance
+- **What works:** Module loading and model registration framework
+
+### 2.2 ✅ Service Layer
+- **File:** `inphms/service/server.py` - **Status:** ✅ COMPLETED
+- **Features:** HTTP server, worker processes, cron processing
+- **What works:** Complete server infrastructure with workers
+
+### 2.3 ✅ Addon System
+- **File:** `inphms/addons/__init__.py` - **Status:** ✅ COMPLETED
+- **Features:** Addon discovery, path management
+- **What works:** Addon loading and management
+
+### 2.4 ✅ Base Module Structure
+- **File:** `inphms/addons/base/` - **Status:** ✅ COMPLETED
+- **Features:** Base module with controllers
+- **What works:** Basic module structure
+
+---
+
+## [WIP] Phase 3: Web Server Implementation (IN PROGRESS)
 **Goal:** Create actual HTTP server using Werkzeug
 
-### 2.1 Create web application structure
-- **File:** `inphms/web/__init__.py`
-- **Purpose:** Flask-like app factory
-- **Status:** [ ] Not Started
+### 3.1 ✅ HTTP Application Class
+- **File:** `inphms/http.py` - **Status:** ✅ COMPLETED
+- **Features:** WSGI application class defined
+- **What works:** Basic HTTP application structure
 
-### 2.2 Implement basic routes
-- **File:** `inphms/web/routes.py`
-- **Purpose:** Homepage, basic ERP pages
-- **Status:** [ ] Not Started
+### 3.2 ❌ Missing: Request Routing
+- **File:** `inphms/http.py` - **Status:** ❌ NOT STARTED
+- **Problem:** Application class is empty, no routing implementation
+- **Fix:** Implement request routing and controller dispatching
+- **Priority:** HIGH
 
-### 2.3 Add Jinja2 templates
-- **File:** `inphms/web/templates/base.html`
-- **Purpose:** Base template for ERP interface
-- **Status:** [ ] Not Started
+### 3.3 ❌ Missing: Controller System
+- **File:** `inphms/http.py` - **Status:** ❌ NOT STARTED  
+- **Problem:** No route decorator or controller base class
+- **Fix:** Add `@route` decorator and `Controller` base class
+- **Priority:** HIGH
+
+### 3.4 ❌ Missing: Template System
+- **File:** `inphms/web/templates/` - **Status:** ❌ NOT STARTED
+- **Problem:** No Jinja2 template integration
+- **Fix:** Add template rendering and base templates
+- **Priority:** MEDIUM
 
 ---
 
-## [ ] Phase 3: Database Layer (MEDIUM PRIORITY)
+## [BLOCKED] Phase 4: Database Models (BLOCKED)
 **Goal:** Connect to MariaDB and create basic models
 
-### 3.1 Database connection
-- **File:** `inphms/database/__init__.py`
-- **Purpose:** MariaDB connection management
-- **Status:** [ ] Not Started
+### 4.1 ❌ Missing: MariaDB Support
+- **File:** `requirements.txt` - **Status:** ❌ NOT STARTED
+- **Problem:** Only PostgreSQL support (psycopg2), no MariaDB
+- **Fix:** Add `pymysql` or `mysqlclient` for MariaDB
+- **Priority:** HIGH
 
-### 3.2 Basic ORM system
-- **File:** `inphms/database/models.py`
-- **Purpose:** Simple model definitions
-- **Status:** [ ] Not Started
+### 4.2 ❌ Missing: Model System
+- **File:** `inphms/models/` - **Status:** ❌ NOT STARTED
+- **Problem:** No ORM model system
+- **Fix:** Create basic model classes and field types
+- **Priority:** HIGH
 
-### 3.3 First ERP model
-- **File:** `inphms/addons/base/models/user.py`
-- **Purpose:** User management system
-- **Status:** [ ] Not Started
+### 4.3 ❌ Missing: User Model
+- **File:** `inphms/addons/base/models/user.py` - **Status:** ❌ NOT STARTED
+- **Problem:** No user management system
+- **Fix:** Create User model with authentication
+- **Priority:** MEDIUM
 
 ---
 
-## [ ] Phase 4: ERP Modules (MEDIUM PRIORITY)
+## [NOT STARTED] Phase 5: ERP Modules (NOT STARTED)
 **Goal:** Create actual business logic modules
 
-### 4.1 Base module
-- **File:** `inphms/addons/base/__init__.py`
-- **Purpose:** Core ERP functionality
-- **Status:** [ ] Not Started
+### 5.1 ❌ Missing: Plantation Module
+- **File:** `inphms/addons/plantation/` - **Status:** ❌ NOT STARTED
+- **Problem:** No plantation-specific features
+- **Fix:** Create plantation management models and controllers
+- **Priority:** MEDIUM
 
-### 4.2 Plantation module
-- **File:** `inphms/addons/plantation/__init__.py`
-- **Purpose:** Plantation-specific features
-- **Status:** [ ] Not Started
-
-### 4.3 User interface
-- **File:** `inphms/addons/web/__init__.py`
-- **Purpose:** Web interface components
-- **Status:** [ ] Not Started
+### 5.2 ❌ Missing: Web Interface
+- **File:** `addons/web/controllers/main.py` - **Status:** ❌ NOT STARTED
+- **Problem:** Controller is deprecated and empty
+- **Fix:** Implement actual web interface controllers
+- **Priority:** MEDIUM
 
 ---
 
-## [ ] Phase 5: Executable Build (HIGH PRIORITY)
+## [COMPLETED] ✅ Phase 6: Windows Installer (DONE!)
+**Goal:** Create Windows installer with all dependencies
+
+### 6.1 ✅ NSIS Installer
+- **File:** `setup/win32/setup.nsi` - **Status:** ✅ COMPLETED
+- **Features:** Complete Windows installer with NSIS
+- **What works:** Python bundling, PostgreSQL download, Nginx download
+
+### 6.2 ✅ Docker Build System
+- **File:** `setup/package.dfwine` - **Status:** ✅ COMPLETED
+- **Features:** Wine-based Windows package building
+- **What works:** Automated installer creation
+
+### 6.3 ✅ Package Management
+- **File:** `setup/package.py` - **Status:** ✅ COMPLETED
+- **Features:** Multi-platform package building
+- **What works:** Windows, Linux, and source package creation
+
+---
+
+## [NOT STARTED] Phase 7: Executable Build (NOT STARTED)
 **Goal:** Create single .exe file for client deployment
 
-### 5.1 Install PyInstaller
-```bash
-pip install pyinstaller
-```
-**Status:** [ ] Not Started
+### 7.1 ❌ Missing: PyInstaller Setup
+- **File:** `requirements.txt` - **Status:** ❌ NOT STARTED
+- **Problem:** No PyInstaller dependency
+- **Fix:** Add `pyinstaller` to requirements
+- **Priority:** MEDIUM
 
-### 5.2 Create build script
-- **File:** `build_exe.bat`
-- **Purpose:** One-click executable creation
-- **Status:** [ ] Not Started
-
-### 5.3 Test executable
-- **Goal:** Verify .exe works on clean Windows machine
-- **Status:** [ ] Not Started
+### 7.2 ❌ Missing: Build Script
+- **File:** `build_exe.bat` - **Status:** ❌ NOT STARTED
+- **Problem:** No executable build process
+- **Fix:** Create one-click executable creation script
+- **Priority:** MEDIUM
 
 ---
 
-## [ ] Phase 6: MariaDB Integration (MEDIUM PRIORITY)
-**Goal:** Connect to XAMPP MariaDB
-
-### 6.1 Update requirements.txt
-- **Add:** `pymysql` for MariaDB connection
-- **Status:** [ ] Not Started
-
-### 6.2 Database configuration
-- **File:** `config/database.conf`
-- **Purpose:** MariaDB connection settings
-- **Status:** [ ] Not Started
-
-### 6.3 Test database connection
-- **Goal:** Verify ERP can connect to MariaDB
-- **Status:** [ ] Not Started
-
----
-
-## [ ] Phase 7: Testing & Deployment (LOW PRIORITY)
+## [NOT STARTED] Phase 8: Testing & Deployment (NOT STARTED)
 **Goal:** Ensure everything works before client delivery
 
-### 7.1 Unit tests
-- **File:** `inphms/tests/`
-- **Purpose:** Test core functionality
-- **Status:** [ ] Not Started
+### 8.1 ❌ Missing: Unit Tests
+- **File:** `inphms/tests/` - **Status:** ❌ NOT STARTED
+- **Problem:** No test framework
+- **Fix:** Create unit tests for core functionality
+- **Priority:** LOW
 
-### 7.2 Integration tests
+### 8.2 ❌ Missing: Integration Tests
 - **Goal:** Test complete ERP workflow
-- **Status:** [ ] Not Started
-
-### 7.3 Client deployment package
-- **Contents:** .exe + config files + database setup
-- **Status:** [ ] Not Started
+- **Status:** ❌ NOT STARTED
+- **Priority:** LOW
 
 ---
 
 ## IMMEDIATE NEXT STEPS (Do These First):
 
-1. **Fix server.py** - Make it start without crashing
-2. **Create basic web server** - Get HTTP working
-3. **Test with simple page** - Verify web interface works
-4. **Build .exe** - Create single executable
-5. **Test deployment** - Verify client can run it
+1. **Fix HTTP routing** - Implement request routing in `inphms/http.py`
+2. **Add MariaDB support** - Replace PostgreSQL with MariaDB in requirements
+3. **Create basic web page** - Get simple HTTP response working
+4. **Test server startup** - Verify server can start and respond to requests
 
 ---
 
-## DEPENDENCIES TO INSTALL:
+## DEPENDENCIES TO ADD:
 ```bash
-pip install werkzeug jinja2 pymysql
-pip install pyinstaller  # For .exe creation
+# Add to requirements.txt:
+pymysql>=1.0.0  # For MariaDB connection
+pyinstaller>=5.0.0  # For .exe creation
 ```
 
-## FILES TO CREATE:
-- `inphms/web/__init__.py`
-- `inphms/web/routes.py`
-- `inphms/web/templates/base.html`
-- `inphms/database/__init__.py`
-- `build_exe.bat`
+## FILES TO CREATE/FIX:
+- **HIGH PRIORITY:** Complete `inphms/http.py` routing implementation
+- **HIGH PRIORITY:** Add MariaDB support to `requirements.txt`
+- **MEDIUM PRIORITY:** Create `inphms/models/` directory and basic models
+- **MEDIUM PRIORITY:** Implement web controllers in `addons/web/`
 
 ## CURRENT BLOCKERS:
-- Server won't start due to missing functions
-- No web server implementation
-- No database connection
-- No ERP modules
+- **HTTP routing not implemented** - Server can't handle web requests
+- **No MariaDB support** - Only PostgreSQL supported
+- **No model system** - No ORM for database operations
+- **Web interface empty** - Controllers are deprecated placeholders
 
-**Next Action:** Start with Phase 1.1 - Fix the broken server.py file
+## REMINDER: NETIFACES DEPENDENCY
+**IMPORTANT:** The `netifaces` package in `setup/package.dfwine` downloads from `nightly.odoo.com` (Odoo's servers). You need to:
+1. **Bundle the netifaces wheel locally** in your project
+2. **Host it on your own server** instead of depending on Odoo
+3. **Update the Dockerfile** to use your local copy
+
+**Next Action:** Start with Phase 3.2 - Implement HTTP request routing in `inphms/http.py`
