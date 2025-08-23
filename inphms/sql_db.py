@@ -315,7 +315,7 @@ class Cursor(BaseCursor):
         terms of the phenomena that must not occur between concurrent
         transactions, such as *dirty read*, etc.
         In the context of a generic business data management software
-        such as OpenERP, we need the best guarantees that no data
+        such as Inphms, we need the best guarantees that no data
         corruption can ever be cause by simply running multiple
         transactions in parallel. Therefore, the preferred level would
         be the *serializable* level, which ensures that a set of
@@ -346,7 +346,7 @@ class Cursor(BaseCursor):
         hit of these heuristics).
 
         As a result of the above, we have selected ``REPEATABLE READ`` as
-        the default transaction isolation level for OpenERP cursors, as
+        the default transaction isolation level for Inphms cursors, as
         it will be mapped to the desired ``snapshot isolation`` level for
         all supported PostgreSQL version (>10).
 
