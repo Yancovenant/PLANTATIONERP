@@ -26,6 +26,8 @@ setup(
         'jinja2',
         'psycopg2 >= 2.2',
         'passlib',
+        'decorator',
+        'requests',
     ],
     python_requires='>=3.10',
     extras_require={

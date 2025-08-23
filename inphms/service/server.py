@@ -423,7 +423,7 @@ class ThreadedServer(CommonServer):
         #         time.sleep(number / 100)
         #         pg_conn.poll()
 
-        #         registries = odoo.modules.registry.Registry.registries
+        #         registries = inphms.modules.registry.Registry.registries
         #         _logger.debug('cron%d polling for jobs', number)
         #         for db_name, registry in registries.d.items():
         #             if registry.ready:
