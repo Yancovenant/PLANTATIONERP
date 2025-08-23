@@ -15,6 +15,15 @@ import logging
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping
+from contextlib import contextmanager
+from inspect import signature
+from pprint import pformat
+from weakref import WeakSet
+
+try:
+    from decorator import decoratorx as decorator
+except ImportError:
+    from decorator import decorator
 
 
 _logger = logging.getLogger(__name__)
@@ -42,3 +51,10 @@ class Environment(Mapping):
     def reset(self):
         """ Reset the transaction, see :meth:`Transaction.reset`. """
         self.transaction.reset()
+
+class Meta(type):
+    """ Metaclass that automatically decorates traditional-style methods by
+        guessing their API. It also implements the inheritance of the
+        :func:`returns` decorators.
+    """
+    

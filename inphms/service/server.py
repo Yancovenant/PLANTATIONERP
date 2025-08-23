@@ -406,34 +406,34 @@ class ThreadedServer(CommonServer):
         # just a bit prevents they all poll the database at the exact
         # same time. This is known as the thundering herd effect.
 
-        # from inphms.addons.base.models.ir_cron import ir_cron
-        # def _run_cron(cr):
-        #     pg_conn = cr._cnx
-        #     # LISTEN / NOTIFY doesn't work in recovery mode
-        #     cr.execute("SELECT pg_is_in_recovery()")
-        #     in_recovery = cr.fetchone()[0]
-        #     if not in_recovery:
-        #         cr.execute("LISTEN cron_trigger")
-        #     else:
-        #         _logger.warning("PG cluster in recovery mode, cron trigger not activated")
-        #     cr.commit()
-        #     alive_time = time.monotonic()
-        #     while config['limit_time_worker_cron'] <= 0 or (time.monotonic() - alive_time) <= config['limit_time_worker_cron']:
-        #         select.select([pg_conn], [], [], SLEEP_INTERVAL + number)
-        #         time.sleep(number / 100)
-        #         pg_conn.poll()
+        from inphms.addons.base.models.ir_cron import ir_cron
+        def _run_cron(cr):
+            pg_conn = cr._cnx
+            # LISTEN / NOTIFY doesn't work in recovery mode
+            cr.execute("SELECT pg_is_in_recovery()")
+            in_recovery = cr.fetchone()[0]
+            if not in_recovery:
+                cr.execute("LISTEN cron_trigger")
+            else:
+                _logger.warning("PG cluster in recovery mode, cron trigger not activated")
+            cr.commit()
+            alive_time = time.monotonic()
+            while config['limit_time_worker_cron'] <= 0 or (time.monotonic() - alive_time) <= config['limit_time_worker_cron']:
+                select.select([pg_conn], [], [], SLEEP_INTERVAL + number)
+                time.sleep(number / 100)
+                pg_conn.poll()
 
-        #         registries = inphms.modules.registry.Registry.registries
-        #         _logger.debug('cron%d polling for jobs', number)
-        #         for db_name, registry in registries.d.items():
-        #             if registry.ready:
-        #                 thread = threading.current_thread()
-        #                 thread.start_time = time.time()
-        #                 try:
-        #                     ir_cron._process_jobs(db_name)
-        #                 except Exception:
-        #                     _logger.warning('cron%d encountered an Exception:', number, exc_info=True)
-        #                 thread.start_time = None
+                registries = inphms.modules.registry.Registry.registries
+                _logger.debug('cron%d polling for jobs', number)
+                for db_name, registry in registries.d.items():
+                    if registry.ready:
+                        thread = threading.current_thread()
+                        thread.start_time = time.time()
+                        try:
+                            ir_cron._process_jobs(db_name)
+                        except Exception:
+                            _logger.warning('cron%d encountered an Exception:', number, exc_info=True)
+                        thread.start_time = None
         while True:
             conn = inphms.sql_db.db_connect('postgres')
             with contextlib.closing(conn.cursor()) as cr:

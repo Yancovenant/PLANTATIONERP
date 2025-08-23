@@ -296,6 +296,18 @@ class BaseCursor:
                 self.commit()
         finally:
             self.close()
+    
+    def flush(self):
+        """ Flush the current transaction, and run precommit hooks. """
+        if self.transaction is not None:
+            self.transaction.flush()
+        self.precommit.run()
+    
+    def clear(self):
+        """ Clear the current transaction, and clear precommit hooks. """
+        if self.transaction is not None:
+            self.transaction.clear()
+        self.precommit.clear()
 
 class Cursor(BaseCursor):
     """Represents an open transaction to the PostgreSQL DB backend,
@@ -398,6 +410,23 @@ class Cursor(BaseCursor):
 
     def __build_dict(self, row):
         return {d.name: row[i] for i, d in enumerate(self._obj.description)}
+    
+    def __getattr__(self, name):
+        if self._closed and name == '_obj':
+            raise psycopg2.InterfaceError("Cursor already closed")
+        return getattr(self._obj, name)
+    
+    def commit(self):
+        """ Perform an SQL `COMMIT` """
+        self.flush()
+        result = self._cnx.commit()
+        self.clear()
+        self._now = None
+        self.prerollback.clear()
+        self.postrollback.clear()
+        self.postcommit.run()
+        return result
+    
     
 
 class PsycoConnection(psycopg2.extensions.connection):

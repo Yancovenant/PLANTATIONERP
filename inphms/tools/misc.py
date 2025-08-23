@@ -192,3 +192,91 @@ class Callbacks:
     def __init__(self):
         self._funcs: collections.deque[Callable] = collections.deque()
         self.data = {}
+    
+    def add(self, func: Callable) -> None:
+        """ Add the given function. """
+        self._funcs.append(func)
+    
+    def run(self) -> None:
+        """ Call all the functions (in addition order), then clear associated data.
+        """
+        while self._funcs:
+            func = self._funcs.popleft()
+            func()
+        self.clear()
+
+    def clear(self) -> None:
+        """ Remove all callbacks and data from self. """
+        self._funcs.clear()
+        self.data.clear()
+    
+
+class frozendict(dict[K, T], typing.Generic[K, T]):
+    """ An implementation of an immutable dictionary. """
+    __slots__ = ()
+
+    def __delitem__(self, key):
+        raise NotImplementedError("'__delitem__' not supported on frozendict")
+
+    def __setitem__(self, key, val):
+        raise NotImplementedError("'__setitem__' not supported on frozendict")
+
+    def clear(self):
+        raise NotImplementedError("'clear' not supported on frozendict")
+
+    def pop(self, key, default=None):
+        raise NotImplementedError("'pop' not supported on frozendict")
+
+    def popitem(self):
+        raise NotImplementedError("'popitem' not supported on frozendict")
+
+    def setdefault(self, key, default=None):
+        raise NotImplementedError("'setdefault' not supported on frozendict")
+
+    def update(self, *args, **kwargs):
+        raise NotImplementedError("'update' not supported on frozendict")
+
+    def __hash__(self) -> int:  # type: ignore
+        return hash(frozenset((key, freehash(val)) for key, val in self.items()))
+
+
+class ReadonlyDict(Mapping[K, T], typing.Generic[K, T]):
+    """Helper for an unmodifiable dictionary, not even updatable using `dict.update`.
+
+    This is similar to a `frozendict`, with one drawback and one advantage:
+
+    - `dict.update` works for a `frozendict` but not for a `ReadonlyDict`.
+    - `json.dumps` works for a `frozendict` by default but not for a `ReadonlyDict`.
+
+    This comes from the fact `frozendict` inherits from `dict`
+    while `ReadonlyDict` inherits from `collections.abc.Mapping`.
+
+    So, depending on your needs,
+    whether you absolutely must prevent the dictionary from being updated (e.g., for security reasons)
+    or you require it to be supported by `json.dumps`, you can choose either option.
+
+        E.g.
+          data = ReadonlyDict({'foo': 'bar'})
+          data['baz'] = 'xyz' # raises exception
+          data.update({'baz', 'xyz'}) # raises exception
+          dict.update(data, {'baz': 'xyz'}) # raises exception
+    """
+    def __init__(self, data):
+        self.__data = dict(data)
+
+    def __contains__(self, key: K):
+        return key in self.__data
+
+    def __getitem__(self, key: K) -> T:
+        try:
+            return self.__data[key]
+        except KeyError:
+            if hasattr(type(self), "__missing__"):
+                return self.__missing__(key)
+            raise
+
+    def __len__(self):
+        return len(self.__data)
+
+    def __iter__(self):
+        return iter(self.__data)

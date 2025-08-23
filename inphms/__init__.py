@@ -18,7 +18,12 @@ assert sys.version_info > MIN_PY_VERSION, f"Outdated python version detected, In
 
 SUPERUSER_ID = 1
 
+# ----------------------------------------------------------
+# Import tools to patch code and libraries
+# required to do as early as possible for evented and timezone
+# ----------------------------------------------------------
 from . import _monkeypatches
+_monkeypatches.patch_all()
 
 # from . import addons
 from . import release
@@ -35,3 +40,4 @@ from . import http
 
 ## MODEL CLASSES
 from . import api
+from . import models

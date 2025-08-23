@@ -756,6 +756,18 @@ class configmanager(object):
                 logging.getLogger(__name__).debug('Failed to create addons data dir %s', d)
         return d
 
+    @property
+    def session_dir(self):
+        d = os.path.join(self['data_dir'], 'sessions')
+        try:
+            os.makedirs(d, 0o700)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+            assert os.access(d, os.W_OK), \
+                "%s: directory is not writable" % d
+        return d
+
     def _normalize(self, path):
         if not path:
             return ''
