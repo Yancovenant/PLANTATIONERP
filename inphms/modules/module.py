@@ -20,7 +20,20 @@ import inphms.tools as tools
 import inphms.release as release
 from inphms.tools.misc import file_path
 
-
+try:
+    from packaging.requirements import InvalidRequirement, Requirement
+except ImportError:
+    class InvalidRequirement(Exception):
+        ...
+    
+    class Requirement:
+        def __init__(self, pydep):
+            if not re.fullmatch(r'[\w\-]+', pydep):  # check that we have no versions or marker in pydep
+                msg = f"Package `packaging` is required to parse `{pydep}` external dependency and is not installed"
+                raise Exception(msg)
+            self.marker = None
+            self.specifier = None
+            self.name = pydep
 
 MANIFEST_NAMES = ('__manifest__.py',)
 README = ['README.rst', 'README.md', 'README.txt']
@@ -98,6 +111,26 @@ def initialize_sys_path(): #ichecked
     base_path = os.path.normcase(os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'addons')))
     if base_path not in inphms.addons.__path__ and os.path.isdir(base_path):
         inphms.addons.__path__.append(base_path)
+    
+    # hook inphms.upgrade on upgrade-path
+    # from inphms import upgrade
+    # legacy_upgrade_path = os.path.join(base_path, 'base', 'maintenance', 'migrations')
+    # for up in (tools.config['upgrade_path'] or legacy_upgrade_path).split(','):
+    #     up = os.path.normcase(os.path.abspath(up.strip()))
+    #     if os.path.isdir(up) and up not in upgrade.__path__:
+    #         upgrade.__path__.append(up)
+
+    # create decrecated module alias from inphms.addons.base.maintenance.migrations to inphms.upgrade
+    # spec = importlib.machinery.ModuleSpec("inphms.addons.base.maintenance", None, is_package=True)
+    # maintenance_pkg = importlib.util.module_from_spec(spec)
+    # maintenance_pkg.migrations = upgrade
+    # sys.modules["inphms.addons.base.maintenance"] = maintenance_pkg
+    # sys.modules["inphms.addons.base.maintenance.migrations"] = upgrade
+
+    # hook deprecated module alias from openerp to odoo and "crm"-like to odoo.addons
+    if not getattr(initialize_sys_path, 'called', False): # only initialize once
+        # sys.meta_path.insert(0, UpgradeHook())
+        initialize_sys_path.called = True
 
 def load_inphms_module(module_name):
     """ Load an Inphms module, if not already loaded.

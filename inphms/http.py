@@ -798,6 +798,131 @@ class HttpDispatcher(Dispatcher):
 
 
 # =========================================================
+# Controller and routes
+# =========================================================
+
+class Controller:
+    """
+    Class mixin that provide module controllers the ability to serve
+    content over http and to be extended in child modules.
+
+    Each class :ref:`inheriting <python:tut-inheritance>` from
+    :class:`~inphms.http.Controller` can use the :func:`~inphms.http.route`:
+    decorator to route matching incoming web requests to decorated
+    methods.
+
+    Like models, controllers can be extended by other modules. The
+    extension mechanism is different because controllers can work in a
+    database-free environment and therefore cannot use
+    :class:~inphms.api.Registry:.
+
+    To *override* a controller, :ref:`inherit <python:tut-inheritance>`
+    from its class, override relevant methods and re-expose them with
+    :func:`~inphms.http.route`:. Please note that the decorators of all
+    methods are combined, if the overriding method’s decorator has no
+    argument all previous ones will be kept, any provided argument will
+    override previously defined ones.
+
+    .. code-block:
+
+        class GreetingController(inphms.http.Controller):
+            @route('/greet', type='http', auth='public')
+            def greeting(self):
+                return 'Hello'
+
+        class UserGreetingController(GreetingController):
+            @route(auth='user')  # override auth, keep path and type
+            def greeting(self):
+                return super().handler()
+    """
+    children_classes = collections.defaultdict(list)  # indexed by module
+
+    @classmethod
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        if Controller in cls.__bases__:
+            path = cls.__module__.split('.')
+            module = path[2] if path[:2] == ['inphms', 'addons'] else ''
+            Controller.children_classes[module].append(cls)
+
+def route(route=None, **routing):
+    """
+    Decorate a controller method in order to route incoming requests
+    matching the given URL and options to the decorated method.
+
+    .. warning::
+        It is mandatory to re-decorate any method that is overridden in
+        controller extensions but the arguments can be omitted. See
+        :class:`~inphms.http.Controller` for more details.
+
+    :param Union[str, Iterable[str]] route: The paths that the decorated
+        method is serving. Incoming HTTP request paths matching this
+        route will be routed to this decorated method. See `werkzeug
+        routing documentation <http://werkzeug.pocoo.org/docs/routing/>`_
+        for the format of route expressions.
+    :param str type: The type of request, either ``'json'`` or
+        ``'http'``. It describes where to find the request parameters
+        and how to serialize the response.
+    :param str auth: The authentication method, one of the following:
+
+        * ``'user'``: The user must be authenticated and the current
+          request will be executed using the rights of the user.
+        * ``'bearer'``: The user is authenticated using an "Authorization"
+          request header, using the Bearer scheme with an API token.
+          The request will be executed with the permissions of the
+          corresponding user. If the header is missing, the request
+          must belong to an authentication session, as for the "user"
+          authentication method.
+        * ``'public'``: The user may or may not be authenticated. If he
+          isn't, the current request will be executed using the shared
+          Public user.
+        * ``'none'``: The method is always active, even if there is no
+          database. Mainly used by the framework and authentication
+          modules. The request code will not have any facilities to
+          access the current user.
+    :param Iterable[str] methods: A list of http methods (verbs) this
+        route applies to. If not specified, all methods are allowed.
+    :param str cors: The Access-Control-Allow-Origin cors directive value.
+    :param bool csrf: Whether CSRF protection should be enabled for the
+        route. Enabled by default for ``'http'``-type requests, disabled
+        by default for ``'json'``-type requests.
+    :param Union[bool, Callable[[registry, request], bool]] readonly:
+        Whether this endpoint should open a cursor on a read-only
+        replica instead of (by default) the primary read/write database.
+    :param Callable[[Exception], Response] handle_params_access_error:
+        Implement a custom behavior if an error occurred when retrieving the record
+        from the URL parameters (access error or missing error).
+    """
+    def decorator(endpoint):
+        fname = f"<function {endpoint.__module__}.{endpoint.__name__}>"
+
+        # Sanitize the routing
+        assert routing.get('type', 'http') in _dispatchers.keys()
+        if route:
+            routing['routes'] = [route] if isinstance(route, str) else route
+        wrong = routing.pop('method', None)
+        if wrong is not None:
+            _logger.warning("%s defined with invalid routing parameter 'method', assuming 'methods'", fname)
+            routing['methods'] = wrong
+
+        @functools.wraps(endpoint)
+        def route_wrapper(self, *args, **params):
+            params_ok = filter_kwargs(endpoint, params)
+            params_ko = set(params) - set(params_ok)
+            if params_ko:
+                _logger.warning("%s called ignoring args %s", fname, params_ko)
+
+            result = endpoint(self, *args, **params_ok)
+            if routing['type'] == 'http':  # _generate_routing_rules() ensures type is set
+                return Response.load(result)
+            return result
+
+        route_wrapper.original_routing = routing
+        route_wrapper.original_endpoint = endpoint
+        return route_wrapper
+    return decorator
+
+# =========================================================
 # WSGI Entry Point
 # =========================================================
 class Application:

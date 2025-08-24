@@ -35,7 +35,7 @@ def conditional(condition, decorator):
     else:
         return lambda fn: fn
 
-def synchronized(lock_attr: str = '_lock'):
+def synchronized(lock_attr: str = '_lock'): #ichecked
     @decorator
     def locked(func, inst, *args, **kwargs):
         with getattr(inst, lock_attr):

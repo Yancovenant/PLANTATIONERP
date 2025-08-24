@@ -33,7 +33,12 @@ def main(args):
     report_configuration()
 
     config = inphms.tools.config
+
+    # the default limit for CSV fields in the module is 128KiB, which is not
+    # quite sufficient to import images to store in attachment. 500MiB is a
+    # bit overkill, but better safe than sorry I guess
     csv.field_size_limit(500 * 1024 * 1024)
+
     preload = []
     if config['db_name']:
         preload = config['db_name'].split(',')
@@ -87,14 +92,12 @@ def check_postgres_user(): #ichecked
         sys.stderr.write("Using the database user 'postgres' is a security risk, aborting.")
         sys.exit(1)
 
-def report_configuration():
+def report_configuration(): #ichecked
     """ Log the server version and config values.
 
     This function assumes the configuration has been init
     """
     config = inphms.tools.config
-    print(f"DEBUG: report_configuration called")
-    print(_logger.level)
     _logger.info("Inphms version %s", __version__)
     if os.path.isfile(config.rcfile):
         _logger.info("Using configuration file at " + config.rcfile)
@@ -120,7 +123,7 @@ def report_configuration():
             '.'.join(map(str, inphms.MAX_PY_VERSION))
         )
 
-def setup_pid_file():
+def setup_pid_file(): #ichecked
     """ Create a file with the process id written in it.
 
     This function assumes the configuration has been initialized.
@@ -132,7 +135,7 @@ def setup_pid_file():
             fd.write(str(pid))
         atexit.register(rm_pid_file, pid)
 
-def rm_pid_file(main_pid):
+def rm_pid_file(main_pid): #ichecked
     config = inphms.tools.config
     if config['pidfile'] and main_pid == os.getpid():
         try:

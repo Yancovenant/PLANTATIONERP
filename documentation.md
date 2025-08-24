@@ -31,7 +31,48 @@
     - if db_user == postgres (default superuser)
     - exit, as it is a security issues, on production application.
 - report configuration
-    - 
+    - just report logging output the config options.
+- csv set limit size to 500MB for larger data imports
+- preload, still not using this
+- stop after init, if defined will force shutdown after run.
+- setup_pid_file() will create if not evented (not a process/background task)
+- THEN last is running the server with, inphms.service.server.start() - will return an rc (return code),
+- to be used when system.exit(return code)
+
+@service.server.start() do:
+- loadserverwidemodules, (web, base) will be imported.
+- individually import and append to sys.modules and run post_load function, to do some setup if defined.
+- being read by __manifest__.py
+- setup the correct Server Class, ThreadedServer + APP => inphms.http.root mostly and .run() it.
+    - the groundwork would be something like this:
+        a. server (ThreadedServer) // server is serving
+        b. app (Application, inphms.http.root) // application
+        c. client (Webserver) // to customer a.k.a web browsers
+    
+
+@ThreadedServer do:
+    - run() :
+        - will use registry.lock to self.start() the server.
+    - start() :
+        - will set memory limit, ONLY FOR LINUX
+        - Setting up signal to be used by signal_handler
+    - signal_handler() :
+        - on SIGINT or SIGTERM, will gracefull shutdown first, then force shutdown
+        - on MEMORY LIMIT EXCEED, will force shutdown.
+        - on HangUp, this is the cool part.
+            - uses server_phoenix to flag `restart after shutdown`
+            - `phoenix = mythical bird that rises from ashes`
+            - shutdown gracefully then restart.
+    - IF BEING RUN with --stop-after-init, it would stop after server.start()
+    - cron_spawn() : // setting up a multiple background jobs, to handle database connection,
+                        processes, pending task, scheduled task
+        - take --max-cron-threads value when instancing cron background threads
+        - run in background @cron_thread()
+        @cron_thread() do : while True // forever
+            - it would use @db_connect('postgres') <- db name
+            - this conn => Connection() Class which have ConnectionPool, dsn, dbname.
+            - Take the Cursor() and use contextlib as a way to auto cleanup.
+            
 
 # CONFIG
 

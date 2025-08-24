@@ -1,5 +1,8 @@
 # Part of Inphms, see License file for full copyright and licensing details.
 
+#-----------------------------------------------------------
+# Threaded, Gevent and Prefork Servers
+#-----------------------------------------------------------
 import datetime
 import errno
 import logging
@@ -134,9 +137,14 @@ def start(preload=None, stop=False):
 
     return rc if rc else 0
 
+#----------------------------------------------------------
+# start/stop public api
+#----------------------------------------------------------
+
 server = None
 server_phoenix = False
-def load_server_wide_modules():
+
+def load_server_wide_modules(): #ichecked
     server_wide_modules = list(inphms.conf.server_wide_modules)
     server_wide_modules.extend(m for m in ('base', 'web') if m not in server_wide_modules)
     for m in server_wide_modules:
@@ -212,10 +220,10 @@ def memory_info(process):
         return pmem.rss
     return pmem.vms
 
-class CommonServer(object):
+class CommonServer(object): #ichecked
     _on_stop_funcs = []
     def __init__(self, app):
-        self.app = app
+        self.app = app ## inphms.http.root
         # config
         self.interface = config['http_interface'] or '0.0.0.0'
         self.port = config['http_port']
@@ -234,6 +242,27 @@ class CommonServer(object):
                 func()
             except Exception:
                 _logger.warning("Exception in %s", func.__name__, exc_info=True)
+    
+    def close_socket(self, sock):
+        """ Closes a socket instance cleanly
+        :param sock: the network socket to close
+        :type sock: socket.socket
+        """
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except socket.error as e:
+            if e.errno == errno.EBADF:
+                # Werkzeug > 0.9.6 closes the socket itself (see commit
+                # https://github.com/mitsuhiko/werkzeug/commit/4d8ca089)
+                return
+            # On OSX, socket shutdowns both sides if any side closes it
+            # causing an error 57 'Socket is not connected' on shutdown
+            # of the other side (or something), see
+            # http://bugs.python.org/issue4397
+            # note: stdlib fixed test, not behavior
+            if e.errno != errno.ENOTCONN or platform.system() not in ['Darwin', 'Windows']:
+                raise
+        sock.close()
 
 class ThreadedServer(CommonServer):
     def __init__(self, app):
@@ -306,17 +335,17 @@ class ThreadedServer(CommonServer):
 
         self.stop()
 
-    def start(self, stop=False):
+    def start(self, stop=False): #ichecked
         _logger.debug("Setting signal handlers")
         set_limit_memory_hard()
         if os.name == 'posix':
-            signal.signal(signal.SIGINT, self.signal_handler)
-            signal.signal(signal.SIGTERM, self.signal_handler)
-            signal.signal(signal.SIGCHLD, self.signal_handler)
-            signal.signal(signal.SIGHUP, self.signal_handler)
-            signal.signal(signal.SIGXCPU, self.signal_handler)
-            signal.signal(signal.SIGQUIT, dumpstacks)
-            signal.signal(signal.SIGUSR1, log_ormcache_stats)
+            signal.signal(signal.SIGINT, self.signal_handler) # Signal Interupt CTRL + C
+            signal.signal(signal.SIGTERM, self.signal_handler) # Signal Terminate, `kill` command
+            signal.signal(signal.SIGCHLD, self.signal_handler) # Signal Child, when a child process dies
+            signal.signal(signal.SIGHUP, self.signal_handler) # Signal Hang Up, connection dropped
+            signal.signal(signal.SIGXCPU, self.signal_handler) # Signal CPU Time Limit Exceeded
+            signal.signal(signal.SIGQUIT, dumpstacks) # Signal Quit, `kill -QUIT` command or CTRL + \
+            signal.signal(signal.SIGUSR1, log_ormcache_stats) # Signal User 1, `kill -USR1 <pid>` command
         elif os.name == 'nt':
             import win32api
             win32api.SetConsoleCtrlHandler(lambda sig: self.signal_handler(sig, None), 1)
@@ -474,7 +503,7 @@ class ThreadedServer(CommonServer):
         else:
             self.limit_reached_time = None
     
-    def signal_handler(self, sig, frame):
+    def signal_handler(self, sig, frame): #ichecked
         if sig in [signal.SIGINT, signal.SIGTERM]:
             # shutdown on kill -INT or -TERM
             self.quit_signals_received += 1
@@ -491,7 +520,7 @@ class ThreadedServer(CommonServer):
         elif sig == signal.SIGHUP:
             # restart on kill -HUP
             global server_phoenix  # noqa: PLW0603
-            server_phoenix = True
+            server_phoenix = True # Set restart flag
             self.quit_signals_received += 1
             # interrupt run() to start shutdown
             raise KeyboardInterrupt()

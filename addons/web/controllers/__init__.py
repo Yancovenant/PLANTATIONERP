@@ -1,6 +1,6 @@
 # Part of Inphms, see License file for full copyright and licensing details.
 
-from . import main
+from . import home
 
 def __getattr__(attr):
     if attr != 'main':

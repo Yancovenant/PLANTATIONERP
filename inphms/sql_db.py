@@ -71,7 +71,7 @@ sql_counter = 0
 
 MAX_IDLE_TIMEOUT = 60 * 10
 
-def connection_info_for(db_or_uri, readonly=False):
+def connection_info_for(db_or_uri, readonly=False): #ichecked
     """ parse the given `db_or_uri` and return a 2-tuple (dbname, connection_params)
 
     Connection params are either a dictionary with a single key ``dsn``
@@ -90,14 +90,15 @@ def connection_info_for(db_or_uri, readonly=False):
     else:
         app_name = "inphms-%d" % os.getpid()
     if db_or_uri.startswith(('postgresql://', 'postgres://')):
+        # postgres://username:password@localhost:5432/mydb <- example
         # extract db from uri
         us = urls.url_parse(db_or_uri)
         if len(us.path) > 1:
-            db_name = us.path[1:]
+            db_name = us.path[1:] # i.e. /mydb
         elif us.username:
-            db_name = us.username
+            db_name = us.username # use username as db_name if path is not provided
         else:
-            db_name = us.hostname
+            db_name = us.hostname # fallback to hostname
         return db_name, {'dsn': db_or_uri, 'application_name': app_name}
 
     connection_info = {'database': db_or_uri, 'application_name': app_name}
@@ -107,15 +108,12 @@ def connection_info_for(db_or_uri, readonly=False):
             cfg = tools.config.get('db_replica_' + p, cfg)
         if cfg:
             connection_info[p] = cfg
-    print(connection_info, 'connection_info')
-    print(db_or_uri, 'db_or_uri')
-    print(tools.config['db_name'], 'tools.config')
     return db_or_uri, connection_info
 
 _Pool = None
 _Pool_readonly = None
 
-def db_connect(to, allow_uri=False, readonly=False):
+def db_connect(to, allow_uri=False, readonly=False): #ichecked
     global _Pool, _Pool_readonly  # noqa: PLW0603 (global-statement)
 
     maxconn = inphms.evented and tools.config['db_maxconn_gevent'] or tools.config['db_maxconn']
@@ -144,20 +142,20 @@ class ConnectionPool(object):
         The connections are *not* automatically closed. Only a close_db()
         can trigger that.
     """
-    def __init__(self, maxconn=64, readonly=False):
+    def __init__(self, maxconn=64, readonly=False): #ichecked
         self._connections = []
         self._maxconn = max(maxconn, 1)
         self._readonly = readonly
         self._lock = threading.Lock()
     
-    def __repr__(self):
+    def __repr__(self): # print or repr() method is used to print the object
         used = len([1 for c, u, _ in self._connections[:] if u])
         count = len(self._connections)
         mode = 'read-only' if self._readonly else 'read/write'
         return f"ConnectionPool({mode};used={used}/count={count}/max={self._maxconn})"
 
     @property
-    def readonly(self):
+    def readonly(self): #ichecked
         return self._readonly
 
     def _debug(self, msg, *args):
@@ -240,25 +238,25 @@ class ConnectionPool(object):
             _logger.info('%r: Closed %d connections %s', self, count,
                         (dsn and last and 'to %r' % last.dsn) or '')
 
-class Connection(object):
+class Connection(object): #ichecked
     """ A lightweight instance of a connection to postgres
     """
-    def __init__(self, pool, dbname, dsn):
+    def __init__(self, pool, dbname, dsn): #ichecked
         self.__dbname = dbname
         self.__dsn = dsn
         self.__pool = pool
     
     @property
-    def dsn(self):
+    def dsn(self): #ichecked
         dsn = dict(self.__dsn)
         dsn.pop('password', None)
         return dsn
 
     @property
-    def dbname(self):
+    def dbname(self): #ichecked
         return self.__dbname
     
-    def cursor(self):
+    def cursor(self): #ichecked
         _logger.debug('create cursor to %r', self.dsn)
         return Cursor(self.__pool, self.__dbname, self.__dsn)
 
@@ -278,7 +276,7 @@ class BaseCursor:
         # is not done here in order to avoid cyclic module dependencies.
         self.transaction = None
     
-    def __enter__(self):
+    def __enter__(self): #ichecked
         """ Using the cursor as a contextmanager automatically commits and
             closes it::
 
@@ -290,7 +288,7 @@ class BaseCursor:
         """
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback): #ichecked
         try:
             if exc_type is None:
                 self.commit()
@@ -308,6 +306,24 @@ class BaseCursor:
         if self.transaction is not None:
             self.transaction.clear()
         self.precommit.clear()
+    
+    def savepoint(self, flush=True) -> Savepoint:
+        """context manager entering in a new savepoint
+
+        With ``flush`` (the default), will automatically run (or clear) the
+        relevant hooks.
+        """
+        if flush:
+            return _FlushingSavepoint(self)
+        else:
+            return Savepoint(self)
+    
+    def reset(self):
+        """ Reset the current transaction (this invalidates more that clear()).
+            This method should be called only right after commit() or rollback().
+        """
+        if self.transaction is not None:
+            self.transaction.reset()
 
 class Cursor(BaseCursor):
     """Represents an open transaction to the PostgreSQL DB backend,
@@ -429,7 +445,7 @@ class Cursor(BaseCursor):
     
     
 
-class PsycoConnection(psycopg2.extensions.connection):
+class PsycoConnection(psycopg2.extensions.connection): #ichecked
     def lobject(*args, **kwargs):
         pass
 
