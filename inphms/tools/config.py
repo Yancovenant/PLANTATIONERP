@@ -388,7 +388,6 @@ class configmanager(object):
         opt = self._parse_config(args)
         if setup_logging is not False:
             inphms.netsvc.init_logger()
-            print(f"DEBUG: init_logger called")
             if setup_logging is None:
                 warnings.warn(
                     "It's recommended to specify wheter"
