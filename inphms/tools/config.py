@@ -21,7 +21,7 @@ crypt_context = CryptContext(schemes=['pbkdf2_sha512', 'plaintext'],
                              deprecated=['plaintext'],
                              pbkdf2_sha512__rounds=600_000)
 
-class MyOption(optparse.Option, object):
+class MyOption(optparse.Option, object): #ichecked
     """ optparse Option with two additional attributes.
 
     The list of command line options (getopt.Option) is used to create the
@@ -39,7 +39,7 @@ class MyOption(optparse.Option, object):
         super(MyOption, self).__init__(*opt, **attrs)
 
 DEFAULT_LOG_HANDLER = ':INFO'
-def _get_default_datadir():
+def _get_default_datadir(): #ichecked
     home = os.path.expanduser('~')
     if os.path.isdir(home):
         func = appdirs.user_data_dir
@@ -83,6 +83,7 @@ class configmanager(object):
             'init', 'save', 'config', 'update', 'stop_after_init', 'dev_mode', 'shell_interface',
         ])
         
+        # dictionary mapping option destination (keys in self.options) to MyOptions.
         self.casts = {}
 
         self.misc = {}
@@ -387,6 +388,7 @@ class configmanager(object):
         opt = self._parse_config(args)
         if setup_logging is not False:
             inphms.netsvc.init_logger()
+            print(f"DEBUG: init_logger called")
             if setup_logging is None:
                 warnings.warn(
                     "It's recommended to specify wheter"
@@ -514,9 +516,11 @@ class configmanager(object):
             # ... or keep, but cast, the config file value.
             elif isinstance(self.options[arg], str) and self.casts[arg].type in optparse.Option.TYPE_CHECKER:
                 self.options[arg] = optparse.Option.TYPE_CHECKER[self.casts[arg].type](self.casts[arg], arg, self.options[arg])
+        
 
         ismultidb = ',' in (self.options.get('db_name') or '')
         die(ismultidb and (opt.init or opt.update), "Cannot use -i/--init or -u/--update with multiple databases in the -d/--database/db_name")
+
         self.options['root_path'] = self._normalize(os.path.join(os.path.dirname(__file__), '..'))
         if not self.options['addons_path'] or self.options['addons_path']=='None':
             default_addons = []
@@ -574,6 +578,7 @@ class configmanager(object):
         conf.server_wide_modules = [
             m.strip() for m in self.options['server_wide_modules'].split(',') if m.strip()
         ]
+
         return opt
 
 
@@ -649,7 +654,7 @@ class configmanager(object):
         if not parser.values.test_tags:
             parser.values.test_tags = "+standard"
 
-    def load(self):
+    def load(self): #ichecked
         outdated_options_map = {
             'xmlrpc_port': 'http_port',
             'xmlrpc_interface': 'http_interface',
@@ -742,9 +747,10 @@ class configmanager(object):
         return self.options[key]
     
     @property
-    def addons_data_dir(self):
+    def addons_data_dir(self): # ichecked
         add_dir = os.path.join(self['data_dir'], 'addons')
         d = os.path.join(add_dir, release.series)
+        
         if not os.path.exists(d):
             try:
                 # bootstrap parent dir +rwx
@@ -768,7 +774,7 @@ class configmanager(object):
                 "%s: directory is not writable" % d
         return d
 
-    def _normalize(self, path):
+    def _normalize(self, path): #ichecked
         if not path:
             return ''
         return normcase(realpath(abspath(expanduser(expandvars(path.strip())))))

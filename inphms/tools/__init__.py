@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+# Part of Inphms, see License file for full copyright and licensing details.
+
 from .config import config
 
 from . import appdirs

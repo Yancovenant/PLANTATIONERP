@@ -63,21 +63,21 @@ def main(args):
     rc = inphms.service.server.start(preload=preload, stop=stop)
     sys.exit(rc)
 
-class Server(Command):
+class Server(Command): #ichecked
     """Start the inphms server (default command)"""
     def run(self, args):
-        inphms.tools.config.parser.prog = f'{Path(sys.argv[0]).name} {self.name}'
+        inphms.tools.config.parser.prog = f'{Path(sys.argv[0]).name} {self.name}' #decorator / cosmetics
         main(args)
 
 
-def check_root_user():
+def check_root_user(): #ichecked
     """ Warn if the process's user is 'root' (on POSIX system)."""
     if os.name == 'posix':
         import getpass
         if getpass.getuser() == 'root':
             sys.stderr.write("Running as user 'root' is a security risk.\n")
 
-def check_postgres_user():
+def check_postgres_user(): #ichecked
     """ Exit if the configured database user is 'root'.
 
     This function assumes the configuration has been init
@@ -93,6 +93,8 @@ def report_configuration():
     This function assumes the configuration has been init
     """
     config = inphms.tools.config
+    print(f"DEBUG: report_configuration called")
+    print(_logger.level)
     _logger.info("Inphms version %s", __version__)
     if os.path.isfile(config.rcfile):
         _logger.info("Using configuration file at " + config.rcfile)

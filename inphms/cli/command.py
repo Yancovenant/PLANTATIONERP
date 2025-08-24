@@ -8,7 +8,7 @@ import inphms
 from inphms.modules import initialize_sys_path, get_modules, get_module_path
 
 commands = {}
-class Command:
+class Command: #ichecked
     name = None
     def __init_subclass__(cls):
         cls.name = cls.name or cls.__name__.lower()
@@ -22,7 +22,7 @@ Available commands:
 
 Use '{inphms_bin} <command> --help' for individual command help."""
 
-class Help(Command):
+class Help(Command): #ichecked
     """ Display list of available commands """
     def run(self, args):
         padding = max([len(cmd) for cmd in commands]) + 2
@@ -39,12 +39,16 @@ def main():
     args = sys.argv[1:]
 
     if len(args) > 1 and args[0].startswith('--addons-path=') and not args[1].startswith("-"):
+        # ? if arg is --addons-path=path, parse the config
         inphms.tools.config._parse_config(args[0])
         args = args[1:]
     
+    # ? if no args, default to `server`
     command = "server"
 
     if len(args) and not args[0].startswith("-"):
+        # ? if args is not starts with -, then it is a command
+        # ? command list is all file inside inphms/cli/commands
         logging.disable(logging.CRITICAL)
         initialize_sys_path()
         for module in get_modules():

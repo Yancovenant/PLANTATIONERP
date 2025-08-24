@@ -88,6 +88,7 @@ import inphms
 from .tools import (
     parse_version, config,
 )
+from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
 from .exceptions import UserError, AccessError, AccessDenied
 from .tools.func import lazy_property
@@ -273,6 +274,184 @@ def db_filter(dbs, host=None):
     return list(dbs)
 
 # =========================================================
+# Session
+# =========================================================
+
+_base64_urlsafe_re = re.compile(r'^[A-Za-z0-9_-]{84}$')
+_session_identifier_re = re.compile(r'^[A-Za-z0-9_-]{42}$')
+class FilesystemSessionStore(sessions.FilesystemSessionStore):
+    """ Place where to load and save session objects. """
+
+class Session(collections.abc.MutableMapping):
+    """ Structure containing data persisted across requests. """
+    __slots__ = ('can_save', '_Session__data', 'is_dirty', 'is_new',
+                 'should_rotate', 'sid')
+
+    def __init__(self, data, sid, new=False):
+        self.can_save = True
+        self.__data = {}
+        self.update(data)
+        self.is_dirty = False
+        self.is_new = new
+        self.should_rotate = False
+        self.sid = sid
+
+    #
+    # MutableMapping implementation with DocDict-like extension
+    #
+    def __getitem__(self, item):
+        return self.__data[item]
+
+    def __setitem__(self, item, value):
+        value = json.loads(json.dumps(value))
+        if item not in self.__data or self.__data[item] != value:
+            self.is_dirty = True
+        self.__data[item] = value
+
+    def __delitem__(self, item):
+        del self.__data[item]
+        self.is_dirty = True
+
+    def __len__(self):
+        return len(self.__data)
+
+    def __iter__(self):
+        return iter(self.__data)
+
+    def __getattr__(self, attr):
+        return self.get(attr, None)
+
+    def __setattr__(self, key, val):
+        if key in self.__slots__:
+            super().__setattr__(key, val)
+        else:
+            self[key] = val
+
+    def clear(self):
+        self.__data.clear()
+        self.is_dirty = True
+
+    #
+    # Session methods
+    #
+    def authenticate(self, dbname, credential):
+        """
+        Authenticate the current user with the given db, login and
+        credential. If successful, store the authentication parameters in
+        the current session, unless multi-factor-auth (MFA) is
+        activated. In that case, that last part will be done by
+        :ref:`finalize`.
+
+        .. versionchanged:: saas-15.3
+           The current request is no longer updated using the user and
+           context of the session when the authentication is done using
+           a database different than request.db. It is up to the caller
+           to open a new cursor/registry/env on the given database.
+        """
+        wsgienv = {
+            'interactive': True,
+            'base_location': request.httprequest.url_root.rstrip('/'),
+            'HTTP_HOST': request.httprequest.environ['HTTP_HOST'],
+            'REMOTE_ADDR': request.httprequest.environ['REMOTE_ADDR'],
+        }
+
+        registry = Registry(dbname)
+        auth_info = registry['res.users'].authenticate(dbname, credential, wsgienv)
+        pre_uid = auth_info['uid']
+
+        self.uid = None
+        self.pre_login = credential['login']
+        self.pre_uid = pre_uid
+
+        with registry.cursor() as cr:
+            env = inphms.api.Environment(cr, pre_uid, {})
+
+            # if 2FA is disabled we finalize immediately
+            user = env['res.users'].browse(pre_uid)
+            if auth_info.get('mfa') == 'skip' or not user._mfa_url():
+                self.finalize(env)
+
+        if request and request.session is self and request.db == dbname:
+            request.env = inphms.api.Environment(request.env.cr, self.uid, self.context)
+            request.update_context(lang=get_lang(request.env(user=pre_uid)).code)
+            # request env needs to be able to access the latest changes from the auth layers
+            request.env.cr.commit()
+
+        return auth_info
+
+    def finalize(self, env):
+        """
+        Finalizes a partial session, should be called on MFA validation
+        to convert a partial / pre-session into a logged-in one.
+        """
+        login = self.pop('pre_login')
+        uid = self.pop('pre_uid')
+
+        env = env(user=uid)
+        user_context = dict(env['res.users'].context_get())
+
+        self.should_rotate = True
+        self.update({
+            'db': env.registry.db_name,
+            'login': login,
+            'uid': uid,
+            'context': user_context,
+            'session_token': env.user._compute_session_token(self.sid),
+        })
+
+    def logout(self, keep_db=False):
+        db = self.db if keep_db else get_default_session()['db']  # None
+        debug = self.debug
+        self.clear()
+        self.update(get_default_session(), db=db, debug=debug)
+        self.context['lang'] = request.default_lang() if request else DEFAULT_LANG
+        self.should_rotate = True
+
+        if request and request.env:
+            request.env['ir.http']._post_logout()
+
+    def touch(self):
+        self.is_dirty = True
+
+    def update_trace(self, request):
+        """
+            :return: dict if a device log has to be inserted, ``None`` otherwise
+        """
+        if self._trace_disable:
+            # To avoid generating useless logs, e.g. for automated technical sessions,
+            # a session can be flagged with `_trace_disable`. This should never be done
+            # without a proper assessment of the consequences for auditability.
+            # Non-admin users have no direct or indirect way to set this flag, so it can't
+            # be abused by unprivileged users. Such sessions will of course still be
+            # subject to all other auditing mechanisms (server logs, web proxy logs,
+            # metadata tracking on modified records, etc.)
+            return
+
+        user_agent = request.httprequest.user_agent
+        platform = user_agent.platform
+        browser = user_agent.browser
+        ip_address = request.httprequest.remote_addr
+        now = int(datetime.now().timestamp())
+        for trace in self._trace:
+            if trace['platform'] == platform and trace['browser'] == browser and trace['ip_address'] == ip_address:
+                # If the device logs are not up to date (i.e. not updated for one hour or more)
+                if bool(now - trace['last_activity'] >= 3600):
+                    trace['last_activity'] = now
+                    self.is_dirty = True
+                    return trace
+                return
+        new_trace = {
+            'platform': platform,
+            'browser': browser,
+            'ip_address': ip_address,
+            'first_activity': now,
+            'last_activity': now
+        }
+        self._trace.append(new_trace)
+        self.is_dirty = True
+        return new_trace
+
+# =========================================================
 # Request and Response
 # =========================================================
 
@@ -381,6 +560,34 @@ class Request:
         session.is_dirty = False
         return session, dbname
     
+    @lazy_property
+    def best_lang(self):
+        lang = self.httprequest.accept_languages.best
+        if not lang:
+            return None
+
+        try:
+            code, territory, _, _ = babel.core.parse_locale(lang, sep='-')
+            if territory:
+                lang = f'{code}_{territory}'
+            else:
+                lang = babel.core.LOCALE_ALIASES[code]
+            return lang
+        except (ValueError, KeyError):
+            return None
+
+    # =====================================================
+    # Helpers
+    # =====================================================
+    
+    def default_lang(self):
+        """Returns default user language according to request specification
+
+        :returns: Preferred language if specified or 'en_US'
+        :rtype: str
+        """
+        return self.best_lang or DEFAULT_LANG
+
     # =====================================================
     # Routing
     # =====================================================

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Part of Inphms, see License file for full copyright and licensing details.
 
 import ast
@@ -77,13 +78,13 @@ TYPED_FIELD_DEFINITION_RE = re.compile(r'''
 _logger = logging.getLogger(__name__)
 
 
-def initialize_sys_path():
+def initialize_sys_path(): #ichecked
     """
     Setup the addons path ``inphms.addons.__path__`` with various defaults
     and explicit directories.
     """
     # hook inphms.addons on data dir
-    dd = os.path.normcase(tools.config.addons_data_dir)
+    dd = os.path.normcase(tools.config.addons_data_dir) # 
     if os.access(dd, os.R_OK) and dd not in inphms.addons.__path__:
         inphms.addons.__path__.append(dd)
 

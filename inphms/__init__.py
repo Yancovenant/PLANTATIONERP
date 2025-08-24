@@ -1,4 +1,4 @@
-# Coding - utf-8
+# -*- coding: utf-8 -*-
 # Part of Inphms. See LICENSE file for full copyright and licensing details.
 
 """ INPHMS core library. """
@@ -15,7 +15,10 @@ MIN_PY_VERSION = (3, 10)
 MAX_PY_VERSION = (3, 13)
 assert sys.version_info > MIN_PY_VERSION, f"Outdated python version detected, Inphms requires Python >= {'.'.join(map(str,  MIN_PY_VERSION))} to run."
 
-
+# ----------------------------------------------------------
+# Shortcuts
+# ----------------------------------------------------------
+# The hard-coded super-user id (a.k.a. administrator, or root user).
 SUPERUSER_ID = 1
 
 # ----------------------------------------------------------
@@ -25,19 +28,24 @@ SUPERUSER_ID = 1
 from . import _monkeypatches
 _monkeypatches.patch_all()
 
+# ----------------------------------------------------------
+# Imports
+# ----------------------------------------------------------
+# from . import upgrade  # this namespace must be imported first
 # from . import addons
 from . import release
-from . import tools
 from . import netsvc
 from . import modules
 from . import addons
 from . import service
 from . import sql_db
+from . import tools
+
+## MODEL CLASSES
+from . import api
+from . import models
 
 ## OTHER IMPORT REQUIRED
 from . import cli
 from . import http
 
-## MODEL CLASSES
-from . import api
-from . import models
