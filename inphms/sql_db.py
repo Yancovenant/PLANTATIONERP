@@ -28,7 +28,8 @@ from werkzeug import urls
 
 import inphms
 from . import tools
-from .tools.func import locked
+from .tools import SQL
+from .tools.func import locked, frame_codeinfo
 from .tools.misc import Callbacks
 
 if typing.TYPE_CHECKING:
@@ -162,7 +163,7 @@ class ConnectionPool(object):
         _logger_conn.debug(('%r ' + msg), self, *args)
     
     @locked
-    def borrow(self, connection_info):
+    def borrow(self, connection_info): #ichecked
         """
         Borrow a PsycoConnection from the pool. If no connection is available, create a new one
         as long as there are still slots available. Perform some garbage-collection in the pool:
@@ -237,6 +238,34 @@ class ConnectionPool(object):
         if count:
             _logger.info('%r: Closed %d connections %s', self, count,
                         (dsn and last and 'to %r' % last.dsn) or '')
+    
+    def _dsn_equals(self, dsn1, dsn2): #ichecked
+        alias_keys = {'dbname': 'database'}
+        ignore_keys = ['password']
+        dsn1, dsn2 = ({
+            alias_keys.get(key, key): str(value)
+            for key, value in (psycopg2.extensions.parse_dsn(dsn) if isinstance(dsn, str) else dsn).items()
+            if key not in ignore_keys
+        } for dsn in (dsn1, dsn2))
+        return dsn1 == dsn2
+    
+    @locked
+    def give_back(self, connection, keep_in_pool=True):
+        self._debug('Give back connection to %r', connection.dsn)
+        for i, (cnx, _, _) in enumerate(self._connections):
+            if cnx is connection:
+                if keep_in_pool:
+                    # Release the connection and record the last time used
+                    self._connections[i][1] = False
+                    self._connections[i][2] = time.time()
+                    self._debug('Put connection to %r in pool', cnx.dsn)
+                else:
+                    self._connections.pop(i)
+                    self._debug('Forgot connection to %r', cnx.dsn)
+                    cnx.close()
+                break
+        else:
+            raise PoolError('This connection does not belong to the pool')
 
 class Connection(object): #ichecked
     """ A lightweight instance of a connection to postgres
@@ -415,6 +444,9 @@ class Cursor(BaseCursor):
             self.__caller = False
         self._closed = False   # real initialization value
         # See the docstring of this class.
+        # self.connection is psycopg2.extensions.connection
+        # this Cursor() is a wrapper around psycopg2.extensions.cursor
+        # @see __getattr__
         self.connection.set_isolation_level(ISOLATION_LEVEL_REPEATABLE_READ)
         self.connection.set_session(readonly=pool.readonly)
 
@@ -427,10 +459,60 @@ class Cursor(BaseCursor):
     def __build_dict(self, row):
         return {d.name: row[i] for i, d in enumerate(self._obj.description)}
     
+    def dictfetchone(self):
+        row = self._obj.fetchone()
+        return row and self.__build_dict(row)
+
+    def dictfetchmany(self, size):
+        return [self.__build_dict(row) for row in self._obj.fetchmany(size)]
+
+    def dictfetchall(self):
+        return [self.__build_dict(row) for row in self._obj.fetchall()]
+    
     def __getattr__(self, name):
         if self._closed and name == '_obj':
             raise psycopg2.InterfaceError("Cursor already closed")
         return getattr(self._obj, name)
+    
+    def __del__(self):
+        if not self._closed and not self._cnx.closed:
+            # Oops. 'self' has not been closed explicitly.
+            # The cursor will be deleted by the garbage collector,
+            # but the database connection is not put back into the connection
+            # pool, preventing some operation on the database like dropping it.
+            # This can also lead to a server overload.
+            msg = "Cursor not closed explicitly\n"
+            if self.__caller:
+                msg += "Cursor was created at %s:%s" % self.__caller
+            else:
+                msg += "Please enable sql debugging to trace the caller."
+            _logger.warning(msg)
+            self._close(True)
+    
+    @property
+    def closed(self):
+        return self._closed or self._cnx.closed
+
+    @property
+    def readonly(self):
+        return bool(self._cnx.readonly)
+    
+    def now(self):
+        """ Return the transaction's timestamp ``NOW() AT TIME ZONE 'UTC'``. """
+        if self._now is None:
+            self.execute("SELECT (now() AT TIME ZONE 'UTC')")
+            self._now = self.fetchone()[0]
+        return self._now
+        
+    def _format(self, query, params=None):
+        encoding = psycopg2.extensions.encodings[self.connection.encoding]
+        return self.mogrify(query, params).decode(encoding, 'replace')
+
+    def mogrify(self, query, params=None):
+        if isinstance(query, SQL):
+            assert params is None, "Unexpected parameters for SQL query object"
+            query, params = query.code, query.params
+        return self._obj.mogrify(query, params)
     
     def commit(self):
         """ Perform an SQL `COMMIT` """
@@ -442,6 +524,153 @@ class Cursor(BaseCursor):
         self.postrollback.clear()
         self.postcommit.run()
         return result
+
+    def rollback(self):
+        """ Perform an SQL `ROLLBACK` """
+        self.clear()
+        self.postcommit.clear()
+        self.prerollback.run()
+        result = self._cnx.rollback()
+        self._now = None
+        self.postrollback.run()
+        return result
+    
+    def execute(self, query, params=None, log_exceptions=True):
+        global sql_counter
+
+        if isinstance(query, SQL):
+            assert params is None, "Unexpected parameters for SQL query object"
+            query, params = query.code, query.params
+
+        if params and not isinstance(params, (tuple, list, dict)):
+            # psycopg2's TypeError is not clear if you mess up the params
+            raise ValueError("SQL query parameters should be a tuple, list or dict; got %r" % (params,))
+
+        start = real_time()
+        try:
+            params = params or None
+            res = self._obj.execute(query, params)
+        except Exception as e:
+            if log_exceptions:
+                _logger.error("bad query: %s\nERROR: %s", self._obj.query or query, e)
+            raise
+        finally:
+            delay = real_time() - start
+            if _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug("[%.3f ms] query: %s", 1000 * delay, self._format(query, params))
+
+        # simple query count is always computed
+        self.sql_log_count += 1
+        sql_counter += 1
+
+        current_thread = threading.current_thread()
+        if hasattr(current_thread, 'query_count'):
+            current_thread.query_count += 1
+            current_thread.query_time += delay
+
+        # optional hooks for performance and tracing analysis
+        for hook in getattr(current_thread, 'query_hooks', ()):
+            hook(self, query, params, start, delay)
+
+        # advanced stats
+        if _logger.isEnabledFor(logging.DEBUG):
+            query_type, table = categorize_query(self._obj.query.decode())
+            log_target = None
+            if query_type == 'into':
+                log_target = self.sql_into_log
+            elif query_type == 'from':
+                log_target = self.sql_from_log
+            if log_target:
+                stats = log_target.setdefault(table, [0, 0])
+                stats[0] += 1
+                stats[1] += delay * 1E6
+        return res
+
+    def execute_values(self, query, argslist, template=None, page_size=100, fetch=False):
+        """
+        A proxy for psycopg2.extras.execute_values which can log all queries like execute.
+        But this method cannot set log_exceptions=False like execute
+        """
+        # Odoo Cursor only proxies all methods of psycopg2 Cursor. This is a patch for problems caused by passing
+        # self instead of self._obj to the first parameter of psycopg2.extras.execute_values.
+        if isinstance(query, Composable):
+            query = query.as_string(self._obj)
+        return psycopg2.extras.execute_values(self, query, argslist, template=template, page_size=page_size, fetch=fetch)
+
+    def split_for_in_conditions(self, ids: Iterable[T], size: int = 0) -> Iterator[tuple[T, ...]]:
+        """Split a list of identifiers into one or more smaller tuples
+           safe for IN conditions, after uniquifying them."""
+        return tools.misc.split_every(size or self.IN_MAX, ids)
+    
+    def print_log(self):
+        global sql_counter
+
+        if not _logger.isEnabledFor(logging.DEBUG):
+            return
+        def process(type):
+            sqllogs = {'from': self.sql_from_log, 'into': self.sql_into_log}
+            sum = 0
+            if sqllogs[type]:
+                sqllogitems = sqllogs[type].items()
+                _logger.debug("SQL LOG %s:", type)
+                for r in sorted(sqllogitems, key=lambda k: k[1]):
+                    delay = timedelta(microseconds=r[1][1])
+                    _logger.debug("table: %s: %s/%s", r[0], delay, r[1][0])
+                    sum += r[1][1]
+                sqllogs[type].clear()
+            sum = timedelta(microseconds=sum)
+            _logger.debug("SUM %s:%s/%d [%d]", type, sum, self.sql_log_count, sql_counter)
+            sqllogs[type].clear()
+        process('from')
+        process('into')
+        self.sql_log_count = 0
+
+    @contextmanager
+    def _enable_logging(self):
+        """ Forcefully enables logging for this cursor, restores it afterwards.
+
+        Updates the logger in-place, so not thread-safe.
+        """
+        level = _logger.level
+        _logger.setLevel(logging.DEBUG)
+        try:
+            yield
+        finally:
+            _logger.setLevel(level)
+
+    def close(self):
+        if not self.closed:
+            return self._close(False)
+
+    def _close(self, leak=False):
+        if not self._obj:
+            return
+
+        del self.cache
+
+        # advanced stats only at logging.DEBUG level
+        self.print_log()
+
+        self._obj.close()
+
+        # This force the cursor to be freed, and thus, available again. It is
+        # important because otherwise we can overload the server very easily
+        # because of a cursor shortage (because cursors are not garbage
+        # collected as fast as they should). The problem is probably due in
+        # part because browse records keep a reference to the cursor.
+        del self._obj
+
+        # Clean the underlying connection, and run rollback hooks.
+        self.rollback()
+
+        self._closed = True
+
+        if leak:
+            self._cnx.leaked = True
+        else:
+            chosen_template = tools.config['db_template']
+            keep_in_pool = self.dbname not in ('template0', 'template1', 'postgres', chosen_template)
+            self.__pool.give_back(self._cnx, keep_in_pool=keep_in_pool)
     
     
 

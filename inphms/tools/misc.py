@@ -1,5 +1,4 @@
 # Part of Inphms, see License file for full copyright and licensing details.
-
 """
 Miscellaneous tools used by Inphms.
 """
@@ -29,8 +28,21 @@ import zlib
 
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, MutableSet, Reversible
+from contextlib import ContextDecorator, contextmanager
+from difflib import HtmlDiff
+from functools import reduce, wraps
+from itertools import islice, groupby as itergroupby
+from operator import itemgetter
+
+import babel
+import babel.dates
+import markupsafe
+import pytz
+# from lxml import etree, objectify
+
 
 import inphms
+import inphms.addons
 
 from .config import config
 
@@ -42,7 +54,18 @@ if typing.TYPE_CHECKING:
 
     P = typing.TypeVar('P')
 
+__all__ = [
+    'file_path',
+    'file_open',
+    'reverse_enumerate',
+    'frozendict',
+]
+
 _logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------
+# File paths
+# ----------------------------------------------------------
 
 def file_path(file_path: str, filter_ext: tuple[str, ...] = ('',), env: Environment | None = None) -> str:
     """Verify that a file exists under a known `addons_path` directory and return its full path.
@@ -117,7 +140,10 @@ def file_open(name: str, mode: str = "r", filter_ext: tuple[str, ...] = (), env:
         return open(path, mode)
     raise FileNotFoundError("Not a file: " + name)
 
-def reverse_enumerate(lst: Sequence[T]) -> Iterator[tuple[int, T]]:
+#----------------------------------------------------------
+# iterables
+#----------------------------------------------------------
+def reverse_enumerate(lst: Sequence[T]) -> Iterator[tuple[int, T]]: #ichecked
     """Like enumerate but in the other direction
 
     Usage::

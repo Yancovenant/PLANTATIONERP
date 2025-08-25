@@ -72,7 +72,26 @@
             - it would use @db_connect('postgres') <- db name
             - this conn => Connection() Class which have ConnectionPool, dsn, dbname.
             - Take the Cursor() and use contextlib as a way to auto cleanup.
-            
+            @Cursor() class do :
+                - when init it would,
+                - ConnectionPool.borrow(dsn) // creating new connection or removing the dead, or reuse the connection.
+                - set _obj -> psycopg2 cursor object
+                - set caller / traceback
+                - set connection isolation level to repeatable read.
+                - and session with readonly true/false
+            @ConnectionPool() do :
+                - borrow() :
+                    - would remove any idle, dead, leaked
+                    - would reuse the connection, using reset(), and early return
+                    - would check if max_conn exceed, if so remove the first not used connection.
+                    - else, would create new psycopg2 connection.
+                    - return psycopg2 object
+            - Will forever run _run_cron() method.
+            - _run_cron() do :
+                - if in recovery mode, setup cron triggers.
+                - (recovery mode returns true if pg database is standby/replica, or read only syncing from primary)
+                - (returns false, if pg database is primary/master)
+                - cron trigger is postgresql features that other processes can send `NOTIFY cron_triggers`
 
 # CONFIG
 
