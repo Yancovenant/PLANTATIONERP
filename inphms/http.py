@@ -674,7 +674,7 @@ class _Response(werkzeug.wrappers.Response):
     """
     default_mimetype = 'text/html'
 
-    def __init__(self, *args, **kw):
+    def __init__(self, *args, **kw): #ichecked
         template = kw.pop('template', None)
         qcontext = kw.pop('qcontext', None)
         uid = kw.pop('uid', None)
@@ -682,7 +682,7 @@ class _Response(werkzeug.wrappers.Response):
         self.set_default(template, qcontext, uid)
     
     @classmethod
-    def load(cls, result, fname="<function>"):
+    def load(cls, result, fname="<function>"): #ichecked
         """
         Convert the return value of an endpoint into a Response.
 
@@ -713,7 +713,7 @@ class _Response(werkzeug.wrappers.Response):
 
         raise TypeError(f"{fname} returns an invalid value: {result}")
     
-    def set_default(self, template=None, qcontext=None, uid=None):
+    def set_default(self, template=None, qcontext=None, uid=None): #ichecked
         self.template = template
         self.qcontext = qcontext or dict()
         self.qcontext['response_template'] = self.template
