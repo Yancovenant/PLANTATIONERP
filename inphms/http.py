@@ -91,7 +91,8 @@ from .tools import (
 from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
 from .exceptions import UserError, AccessError, AccessDenied
-from .tools.func import lazy_property
+from .tools.func import lazy_property, filter_kwargs
+from .tools.facade import Proxy
 
 
 _logger = logging.getLogger(__name__)
@@ -653,12 +654,42 @@ class Request:
             readonly=readonly,
         )
 
+class _Response(werkzeug.wrappers.Response):
+    """
+    Outgoing HTTP response with body, status, headers and qweb support.
+    In addition to the :class:`werkzeug.wrappers.Response` parameters,
+    this class's constructor can take the following additional
+    parameters for QWeb Lazy Rendering.
+
+    :param str template: template to render
+    :param dict qcontext: Rendering context to use
+    :param int uid: User id to use for the ir.ui.view render call,
+        ``None`` to use the request's user (the default)
+
+    these attributes are available as parameters on the Response object
+    and can be altered at any time before rendering
+
+    Also exposes all the attributes and methods of
+    :class:`werkzeug.wrappers.Response`.
+    """
+    default_mimetype = 'text/html'
+
+    def __init__(self, *args, **kw):
+        template = kw.pop('template', None)
+        qcontext = kw.pop('qcontext', None)
+        uid = kw.pop('uid', None)
+        super().__init__(*args, **kw)
+        self.set_default(template, qcontext, uid)
+
+class Response(Proxy):
+    _wrapped__ = _Response
+
 # =========================================================
 # Core type-specialized dispatchers
 # =========================================================
 
 _dispatchers = {}
-class Dispatcher(ABC):
+class Dispatcher(ABC): # ABC - Abstract Base Class
     routing_type: str
 
     @classmethod
@@ -801,7 +832,7 @@ class HttpDispatcher(Dispatcher):
 # Controller and routes
 # =========================================================
 
-class Controller:
+class Controller(object):
     """
     Class mixin that provide module controllers the ability to serve
     content over http and to be extended in child modules.
@@ -905,7 +936,7 @@ def route(route=None, **routing):
             _logger.warning("%s defined with invalid routing parameter 'method', assuming 'methods'", fname)
             routing['methods'] = wrong
 
-        @functools.wraps(endpoint)
+        @functools.wraps(endpoint) # replaces the original function to route_wrapper()
         def route_wrapper(self, *args, **params):
             params_ok = filter_kwargs(endpoint, params)
             params_ko = set(params) - set(params_ok)

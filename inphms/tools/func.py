@@ -35,6 +35,42 @@ def conditional(condition, decorator):
     else:
         return lambda fn: fn
 
+def filter_kwargs(func: Callable, kwargs: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """ Filter the given keyword arguments to only return the kwargs
+        that binds to the function's signature.
+
+        ### Parameter.kind
+
+        Example::
+
+            @def func(a, b):
+                pass
+            :can be called as func(1, 2) or func(a=1, b=2)
+            :POSITIONAL_OR_KEYWORD
+
+            @def func(*args, a, b):
+                pass
+            :can be called as func(1, 2, a=3, b=4)
+            :KEYWORD_ONLY
+
+            @def func(a, b, **kwargs):
+                pass
+            :can be called as func(1, 2, c=3, d=4) or func(a=1, b=2, c=3, d=4) ACCEPTS any keyword arguments
+            :VAR_KEYWORD
+    """
+    leftovers = set(kwargs)
+    for p in signature(func).parameters.values():
+        if p.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY):
+            leftovers.discard(p.name)
+        elif p.kind == Parameter.VAR_KEYWORD:  # **kwargs
+            leftovers.clear()
+            break
+
+    if not leftovers:
+        return kwargs
+
+    return {key: kwargs[key] for key in kwargs if key not in leftovers}
+
 def synchronized(lock_attr: str = '_lock'): #ichecked
     @decorator
     def locked(func, inst, *args, **kwargs):
@@ -43,7 +79,7 @@ def synchronized(lock_attr: str = '_lock'): #ichecked
     return locked
 locked = synchronized()
 
-def frame_codeinfo(fframe, back=0):
+def frame_codeinfo(fframe, back=0): #ichecked
     """ Return a (filename, line) pair for a previous frame .
         @return (filename, lineno) where lineno is either int or string==''
     """
