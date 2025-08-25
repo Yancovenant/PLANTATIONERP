@@ -267,7 +267,7 @@ def db_filter(dbs, host=None):
         return [db for db in dbs if dbfilter_re.match(db)]
 
     if config['db_name']:
-        # In case --db-filter is not provided and --database is passed, Odoo will
+        # In case --db-filter is not provided and --database is passed, Inphms will
         # use the value of --database as a comma separated list of exposed databases.
         exposed_dbs = {db.strip() for db in config['db_name'].split(',')}
         return sorted(exposed_dbs.intersection(dbs))
@@ -680,6 +680,58 @@ class _Response(werkzeug.wrappers.Response):
         uid = kw.pop('uid', None)
         super().__init__(*args, **kw)
         self.set_default(template, qcontext, uid)
+    
+    @classmethod
+    def load(cls, result, fname="<function>"):
+        """
+        Convert the return value of an endpoint into a Response.
+
+        :param result: The endpoint return value to load the Response from.
+        :type result: Union[Response, werkzeug.wrappers.BaseResponse,
+            werkzeug.exceptions.HTTPException, str, bytes, NoneType]
+        :param str fname: The endpoint function name wherefrom the
+            result emanated, used for logging.
+        :returns: The created :class:`~inphms.http.Response`.
+        :rtype: Response
+        :raises TypeError: When ``result`` type is none of the above-
+            mentioned type.
+        """
+        if isinstance(result, Response):
+            return result
+
+        if isinstance(result, werkzeug.exceptions.HTTPException):
+            _logger.warning("%s returns an HTTPException instead of raising it.", fname)
+            raise result
+
+        if isinstance(result, werkzeug.wrappers.Response):
+            response = cls.force_type(result)
+            response.set_default()
+            return response
+
+        if isinstance(result, (bytes, str, type(None))):
+            return Response(result)
+
+        raise TypeError(f"{fname} returns an invalid value: {result}")
+    
+    def set_default(self, template=None, qcontext=None, uid=None):
+        self.template = template
+        self.qcontext = qcontext or dict()
+        self.qcontext['response_template'] = self.template
+        self.uid = uid
+    
+    def render(self):
+        """ Renders the Response's template, returns the result. """
+        self.qcontext['request'] = request
+        return request.env["ir.ui.view"]._render_template(self.template, self.qcontext)
+    
+    def flatten(self):
+        """
+        Forces the rendering of the response's template, sets the result
+        as response body and unsets :attr:`.template`
+        """
+        if self.template:
+            self.response.append(self.render())
+            self.template = None
 
 class Response(Proxy):
     _wrapped__ = _Response
@@ -689,7 +741,7 @@ class Response(Proxy):
     add_etag = ProxyFunc(None)
     age = ProxyAttr()
     autocorrect_location_header = ProxyAttr(bool)
-    cache_control = ProxyAttr(ResponseCacheControl)
+    # cache_control = ProxyAttr(ResponseCacheControl)
     call_on_close = ProxyFunc()
     charset = ProxyAttr(str)
     content_encoding = ProxyAttr(str)
@@ -708,7 +760,7 @@ class Response(Proxy):
     get_data = ProxyFunc()
     get_etag = ProxyFunc()
     get_json = ProxyFunc()
-    headers = ProxyAttr(Headers)
+    # headers = ProxyAttr(Headers)
     is_json = ProxyAttr(bool)
     is_sequence = ProxyAttr(bool)
     is_streamed = ProxyAttr(bool)
@@ -727,7 +779,7 @@ class Response(Proxy):
     set_etag = ProxyFunc(None)
     status = ProxyAttr(str)
     status_code = ProxyAttr(int)
-    stream = ProxyAttr(ResponseStream)
+    # stream = ProxyAttr(ResponseStream)
 
     # inphms.http._response attributes
     load = ProxyFunc()
@@ -737,6 +789,23 @@ class Response(Proxy):
     is_qweb = ProxyAttr(bool)
     render = ProxyFunc()
     flatten = ProxyFunc(None)
+
+    def __init__(self, *args, **kwargs):
+        response = None
+        if len(args) == 1:
+            arg = args[0]
+            if isinstance(arg, Response):
+                response = arg._wrapped__
+            elif isinstance(arg, _Response):
+                response = arg
+            elif isinstance(arg, werkzeug.wrappers.Response):
+                response = _Response.load(arg)
+        if response is None:
+            response = _Response(*args, **kwargs)
+
+        super().__init__(response)
+        if 'set_cookie' in response.__dict__:
+            self.__dict__['set_cookie'] = response.__dict__['set_cookie']
 
 # =========================================================
 # Core type-specialized dispatchers
@@ -831,7 +900,7 @@ class HttpDispatcher(Dispatcher):
         body and query-string and checking cors/csrf while dispatching a
         request to a ``type='http'`` route.
 
-        See :meth:`~odoo.http.Response.load` method for the compatible
+        See :meth:`~inphms.http.Response.load` method for the compatible
         endpoint return types.
         """
         self.request.params = dict(self.request.get_http_params(), **args)
