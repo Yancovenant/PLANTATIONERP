@@ -92,7 +92,7 @@ from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
 from .exceptions import UserError, AccessError, AccessDenied
 from .tools.func import lazy_property, filter_kwargs
-from .tools.facade import Proxy
+from .tools.facade import Proxy, ProxyFunc, ProxyAttr
 
 
 _logger = logging.getLogger(__name__)
@@ -683,6 +683,60 @@ class _Response(werkzeug.wrappers.Response):
 
 class Response(Proxy):
     _wrapped__ = _Response
+
+    # werkzeug.wrappers.Response attributes
+    __call__ = ProxyFunc()
+    add_etag = ProxyFunc(None)
+    age = ProxyAttr()
+    autocorrect_location_header = ProxyAttr(bool)
+    cache_control = ProxyAttr(ResponseCacheControl)
+    call_on_close = ProxyFunc()
+    charset = ProxyAttr(str)
+    content_encoding = ProxyAttr(str)
+    content_length = ProxyAttr(int)
+    content_location = ProxyAttr(str)
+    content_md5 = ProxyAttr(str)
+    content_type = ProxyAttr(str)
+    data = ProxyAttr()
+    default_mimetype = ProxyAttr(str)
+    default_status = ProxyAttr(int)
+    delete_cookie = ProxyFunc(None)
+    direct_passthrough = ProxyAttr(bool)
+    expires = ProxyAttr()
+    force_type = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
+    freeze = ProxyFunc(None)
+    get_data = ProxyFunc()
+    get_etag = ProxyFunc()
+    get_json = ProxyFunc()
+    headers = ProxyAttr(Headers)
+    is_json = ProxyAttr(bool)
+    is_sequence = ProxyAttr(bool)
+    is_streamed = ProxyAttr(bool)
+    iter_encoded = ProxyFunc()
+    json = ProxyAttr()
+    last_modified = ProxyAttr()
+    location = ProxyAttr(str)
+    make_conditional = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
+    make_sequence = ProxyFunc(None)
+    max_cookie_size = ProxyAttr(int)
+    mimetype = ProxyAttr(str)
+    response = ProxyAttr()
+    retry_after = ProxyAttr()
+    set_cookie = ProxyFunc(None)
+    set_data = ProxyFunc(None)
+    set_etag = ProxyFunc(None)
+    status = ProxyAttr(str)
+    status_code = ProxyAttr(int)
+    stream = ProxyAttr(ResponseStream)
+
+    # inphms.http._response attributes
+    load = ProxyFunc()
+    set_default = ProxyFunc(None)
+    qcontext = ProxyAttr()
+    template = ProxyAttr(str)
+    is_qweb = ProxyAttr(bool)
+    render = ProxyFunc()
+    flatten = ProxyFunc(None)
 
 # =========================================================
 # Core type-specialized dispatchers
