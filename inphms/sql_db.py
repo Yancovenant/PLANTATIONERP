@@ -128,7 +128,7 @@ def db_connect(to, allow_uri=False, readonly=False): #ichecked
         raise ValueError('URI connections not allowed')
     return Connection(_Pool_readonly if readonly else _Pool, db, info)
 
-def close_all():
+def close_all(): #ichecked
     if _Pool:
         _Pool.close_all()
     if _Pool_readonly:

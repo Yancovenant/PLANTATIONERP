@@ -929,6 +929,9 @@ class Application:
     """ INPHMS WSGI Application """
     # See also: https://www.python.org/dev/peps/pep-3333
     def __call__(self, environ, start_response):
+        print("Application __call__")
+        import traceback
+        traceback.print_stack()
         """
         WSGI application entry point.
 

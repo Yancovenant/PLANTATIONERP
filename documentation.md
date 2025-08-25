@@ -48,6 +48,8 @@
         a. server (ThreadedServer) // server is serving
         b. app (Application, inphms.http.root) // application
         c. client (Webserver) // to customer a.k.a web browsers
+- automatically create instance of inphms.http.root = Application().
+- this would handle all the request http coming to the server.
     
 
 @ThreadedServer do:
@@ -92,6 +94,28 @@
                 - (recovery mode returns true if pg database is standby/replica, or read only syncing from primary)
                 - (returns false, if pg database is primary/master)
                 - cron trigger is postgresql features that other processes can send `NOTIFY cron_triggers`
+                @Registry.registries :
+                    - will return LRU, `least recently used` that act like a cache. by josiah carlson.
+                    - size depending on the platform, windows -> 24 if not defined, linux const / 15mb
+                - will RUN forever, and await database notifications.
+                - loops through the Registry.registries -> expect K = db_name, V = registry.
+                - if its registry.ready run `ir_cron._process_jobs(db_name)`
+    - while no quit signal recivied , e.g == 0
+    - @processlimit() do :
+        - just check whichever type cron, or http request, already reached maximum limit defined by config.
+        - if yes add to list, if dead, removed from list.
+        - if still set the limit_reached_time -> to time or the first time its being reached.
+        - else would do None.
+    - if limit_reached_time is set, it would do (a). check if there is any valid request,
+    - if true, will wait abit, time.sleep(1).
+    - but if the wait.time already exceed SLEEP_INTERVAL (60s) it would do self.reload
+    - (b). if do not have any valid request, it would reload() immediately
+    - @reload() do :
+        - os.kill(pid, signal.SIGHUP)
+        - this process will be continued by the @signal_handler() on SIGHUP event.
+    - @stop() do :
+        - closing everything and do cleanup.
+
 
 # CONFIG
 

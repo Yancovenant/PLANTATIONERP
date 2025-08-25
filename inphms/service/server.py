@@ -57,6 +57,7 @@ except ImportError:
 import inphms
 from inphms.tools import config
 from inphms.modules.registry import Registry
+from inphms.tools.misc import dumpstacks
 
 _logger = logging.getLogger(__name__)
 
@@ -209,7 +210,7 @@ def preload_registries(dbnames):
             return -1
     return rc
 
-def memory_info(process):
+def memory_info(process): #ichecked
     """
     :return: the relevant memory usage according to the OS in bytes.
     """
@@ -231,11 +232,11 @@ class CommonServer(object): #ichecked
         self.pid = os.getpid()
     
     @classmethod
-    def on_stop(cls, func):
+    def on_stop(cls, func): #ichecked
         """ Register a cleanup function to be executed when the server stops """
         cls._on_stop_funcs.append(func)
         
-    def stop(self):
+    def stop(self): #ichecked
         for func in self._on_stop_funcs:
             try:
                 _logger.debug("on_close call %s", func)
@@ -265,7 +266,7 @@ class CommonServer(object): #ichecked
         sock.close()
 
 class ThreadedServer(CommonServer):
-    def __init__(self, app):
+    def __init__(self, app): #ichecked
         super(ThreadedServer, self).__init__(app)
         self.main_thread_id = threading.current_thread().ident
         # Variable keeping track of the number of calls to the signal handler defined
@@ -277,7 +278,7 @@ class ThreadedServer(CommonServer):
         self.limits_reached_threads = set()
         self.limit_reached_time = None
 
-    def run(self, preload=None, stop=False):
+    def run(self, preload=None, stop=False): #ichecked
         """ Start the http server and the cron thread then wait for a signal.
 
         The first SIGINT or SIGTERM signal will initiate a graceful shutdown while
@@ -355,7 +356,7 @@ class ThreadedServer(CommonServer):
             # some tests need the http daemon to be available...
             self.http_spawn()
     
-    def stop(self):
+    def stop(self): #ichecked
         """ Shutdown the WSGI server. Wait for non daemon threads.
         """
         if server_phoenix:
@@ -393,6 +394,9 @@ class ThreadedServer(CommonServer):
         _logger.debug('--')
         logging.shutdown()
     
+    def reload(self): #ichecked
+        os.kill(self.pid, signal.SIGHUP)
+    
     def http_spawn(self):
         self.httpd = ThreadedWSGIServerReloadable(self.interface, self.port, self.app)
         threading.Thread(
@@ -401,7 +405,7 @@ class ThreadedServer(CommonServer):
             daemon=True,
         ).start()
     
-    def cron_spawn(self):
+    def cron_spawn(self): #ichecked
         """ Start the above runner function in a daemon thread.
 
         The thread is a typical daemon thread: it will never quit and must be
@@ -422,7 +426,7 @@ class ThreadedServer(CommonServer):
             t.start()
             _logger.debug("cron%d started!" % i)
     
-    def cron_thread(self, number):
+    def cron_thread(self, number): #ichecked
         # Steve Reich timing style with thundering herd mitigation.
         #
         # On startup, all workers bind on a notification channel in
@@ -436,7 +440,7 @@ class ThreadedServer(CommonServer):
         # same time. This is known as the thundering herd effect.
 
         from inphms.addons.base.models.ir_cron import ir_cron
-        def _run_cron(cr):
+        def _run_cron(cr): #ichecked
             pg_conn = cr._cnx
             # LISTEN / NOTIFY doesn't work in recovery mode
             cr.execute("SELECT pg_is_in_recovery()")
@@ -470,7 +474,7 @@ class ThreadedServer(CommonServer):
                 cr._cnx.close()
             _logger.info('cron%d max age (%ss) reached, releasing connection.', number, config['limit_time_worker_cron'])
         
-    def process_limit(self):
+    def process_limit(self): #ichecked
         memory = memory_info(psutil.Process(os.getpid()))
         if config['limit_memory_soft'] and memory > config['limit_memory_soft']:
             _logger.warning('Server memory limit (%s) reached.', memory)
