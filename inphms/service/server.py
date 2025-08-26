@@ -397,7 +397,7 @@ class ThreadedServer(CommonServer):
     def reload(self): #ichecked
         os.kill(self.pid, signal.SIGHUP)
     
-    def http_spawn(self):
+    def http_spawn(self): #ichecked
         self.httpd = ThreadedWSGIServerReloadable(self.interface, self.port, self.app)
         threading.Thread(
             target=self.httpd.serve_forever,
@@ -623,4 +623,13 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
         self._sent_date_header = None
         self._sent_server_header = None
         super().__init__(*args, **kwargs)
+    
+    def setup(self):
+        # timeout to avoid chrome headless preconnect during tests
+        if config['test_enable'] or config['test_file']:
+            self.timeout = 5
+        # flag the current thread as handling a http request
+        super().setup()
+        me = threading.current_thread()
+        me.name = 'inphms.service.http.request.%s' % (me.ident,)
 

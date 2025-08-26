@@ -165,7 +165,19 @@
 
 
 @RequestHandler() do :
+    - __init__():
+        - which would call parents (werkzeug) __init__:
+            - which would do:
+                - (a). self.setup()
+                - (b). self.handle()
+                - (c). self.finish()
+    - @setup() do:
+        - overriding/patching the self.timeout if test_enable,
+        - setting up thread name for different request incoming.
+        - would call super().setup() too. so it goes back to werkzeug.
+        - werkzeug does, prepares the socket for reading/writing.
     - 
+
 
 # CONFIG
 
