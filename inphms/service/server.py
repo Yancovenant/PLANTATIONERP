@@ -633,7 +633,7 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
         me = threading.current_thread()
         me.name = 'inphms.service.http.request.%s' % (me.ident,)
     
-    def log_error(self, format, *args):
+    def log_error(self, format, *args): #ichecked
         if format == "Request timed out: %r" and config['test_enable']:
             _logger.info(format, *args)
         else:
