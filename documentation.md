@@ -58,6 +58,11 @@
         - will use registry.lock to self.start() the server.
     - start() :
         - will set memory limit, ONLY FOR LINUX
+            - using config value, gevent, or original hard limit
+            - setting limit by:
+                - RLIMIT_AS -> maximum virtual memory a process can use.
+                - get current limit, soft, hard -> cannot be exceed
+                - set new limit, soft.
         - Setting up signal to be used by signal_handler
         - if config['http_enabled'] will do @http_spawn()
             - @http_spawn() do :
@@ -123,7 +128,44 @@
 
 
 @ThreadedWSGIServerReloadable do :
-    -
+    - Inheriting & PATCHING : 
+        - (a). LoggingBaseWSGIServerMixIn -> which to only logged output handler.
+        - (b). raw werkzeug.serving.ThreadedWSGIServer
+    - on Init, it would:
+        - set thread maximum limit IF set on environment global value using `INPHMS_MAX_HTTP_THREADS`
+        - if not set, its bypassed.
+        - then call the raw werkzeug `ThreadedWSGIServer` __init__, and passing:
+            - (a). self.host -> self.interface -> 0.0.0.0 -> accept any network conection
+            - (b). self.port -> port -> 8069 default
+            - (c). self.app -> inphms.http.root = Application()
+            - (d). handler -> RequestHandler() class
+        - set self.daemon_threads = False, so server can wait when shutting down gracefully.
+    - Parent werkzeug patching method.
+        - @server_bind():
+            - will use systemd existing socket IF available, mostly on linux.
+            - else, would just use the werkzeug @server_bind() method.
+        - @server_activate():
+            - just listen() <- to socket
+        - @_handle_request_noblock() :
+            - this is patching werkzeug on @serve_forever(), but would call the werkzeug method back again.
+            - we would only want to check if Semaphore().acquire(timeout=0.1) means that, if the limit is not yet full, if it is, it would do early return. do possibly do the rest to werkzeug method @serve_forever()
+            - else we wanna call the super()._handle_request_noblock()
+        - @process_request() :
+            - patching the werkzeug /-> overriden by their own ThreadMixin.
+            - to add attribute of t.type = 'http' and t.start_time = time.time()
+            - full patch. but stil call the self.process_request_thread() as the target.
+            - @process_request_thread() do :
+                - @finish_request() which will do :
+                    - self.RequestHandlerClass() instance creation, <- this is our @RequestHandler class.
+        - @shutdown_request() :
+            - overriding the werkzeug, but not full.
+            - would do Semaphore().release() first.
+        - @LoggingBaseWSGIServerMixIn.handle_error() :
+            - completely overriding the werkzeug to handle loging error ourselves.
+
+
+@RequestHandler() do :
+    - 
 
 # CONFIG
 

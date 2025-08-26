@@ -63,7 +63,7 @@ _logger = logging.getLogger(__name__)
 
 SLEEP_INTERVAL = 60
 
-def set_limit_memory_hard():
+def set_limit_memory_hard(): #ichecked
     if platform.system() != 'Linux':
         return
     limit_memory_hard = config['limit_memory_hard']
@@ -533,11 +533,12 @@ class ThreadedServer(CommonServer):
 #----------------------------------------------------------
 # Werkzeug WSGI servers patched
 #----------------------------------------------------------
-class LoggingBaseWSGIServerMixIn(object):
+class LoggingBaseWSGIServerMixIn(object): #ichecked
     def handle_error(self, request, client_address):
         t, e, _ = sys.exc_info()
         if t == socket.error and e.errno == errno.EPIPE:
-            # broken pipe, ignore error
+            # broken pipe, ignore error,
+            # happens when client disconnects while server is sending data
             return
         _logger.exception('Exception happened during processing of request from %s', client_address)
 
@@ -546,7 +547,7 @@ class ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.
     given by the environment, this is used by autoreload to keep the listen
     socket open when a reload happens.
     """
-    def __init__(self, host, port, app):
+    def __init__(self, host, port, app): #ichecked
         # The INPHMS_MAX_HTTP_THREADS environment variable allows to limit the amount of concurrent
         # socket connections accepted by a threaded server, implicitly limiting the amount of
         # concurrent threads running for http requests handling.
@@ -559,17 +560,67 @@ class ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.
                 # half the size of db_maxconn because while most requests won't borrow cursors concurrently
                 # there are some exceptions where some controllers might allocate two or more cursors.
                 self.max_http_threads = max((config['db_maxconn'] - config['max_cron_threads']) // 2, 1)
+            # Semaphore is a thread-safe counter, used to limit the number of concurrent threads.
+            # Like a "bouncer" at a club, only allow a certain number of people in at a time.
             self.http_threads_sem = threading.Semaphore(self.max_http_threads)
-        super(ThreadedWSGIServerReloadable, self).__init__(host, port, app,
-                                                           handler=RequestHandler)
+        super().__init__(host, port, app, handler=RequestHandler)
 
         # See https://github.com/pallets/werkzeug/pull/770
         # This allow the request threads to not be set as daemon
         # so the server waits for them when shutting down gracefully.
-        self.daemon_threads = False
+        self.daemon_threads = False # werkzeug attribute
+    
+    def server_bind(self): #ichecked
+        SD_LISTEN_FDS_START = 3 # systemd on linux, listen on socket fd
+        if os.environ.get('LISTEN_FDS') == '1' and os.environ.get('LISTEN_PID') == str(os.getpid()):
+            self.reload_socket = True
+            self.socket = socket.fromfd(SD_LISTEN_FDS_START, socket.AF_INET, socket.SOCK_STREAM)
+            _logger.info('HTTP service (werkzeug) running through socket activation')
+        else: #normal case, bind to port
+            # TODO: check windows equivalent to systemd door building
+            #       SCM, Service Control Manager <- need to check
+            #       IIS, Internet Information Services <- need to check
+            self.reload_socket = False
+            super().server_bind()
+            _logger.info('HTTP service (werkzeug) running on %s:%s', self.server_name, self.server_port)
+        
+    def server_activate(self): #ichecked
+        if not self.reload_socket:
+            super().server_activate()
+
+    def _handle_request_noblock(self): #ichecked
+        if self.max_http_threads and not self.http_threads_sem.acquire(timeout=0.1):
+            # If the semaphore is full we will return immediately to the upstream (most probably
+            # socketserver.BaseServer's serve_forever loop  which will retry immediately as the
+            # selector will find a pending connection to accept on the socket. There is a 100 ms
+            # penalty in such case in order to avoid cpu bound loop while waiting for the semaphore.
+            return
+        # upstream _handle_request_noblock will handle errors and call shutdown_request in any cases
+        super()._handle_request_noblock()
+    
+    def process_request(self, request, client_address): #ichecked
+        """
+        Start a new thread to process the request.
+        Override the default method of class socketserver.ThreadingMixIn
+        to be able to get the thread object which is instantiated
+        and set its start time as an attribute
+        """
+        t = threading.Thread(target = self.process_request_thread,
+                             args = (request, client_address))
+        t.daemon = self.daemon_threads
+        t.type = 'http'
+        t.start_time = time.time()
+        t.start()
+
+    def shutdown_request(self, request): #ichecked
+        if self.max_http_threads:
+            # upstream is supposed to call this function no matter what happens during processing
+            self.http_threads_sem.release()
+        super().shutdown_request(request)
 
 class RequestHandler(werkzeug.serving.WSGIRequestHandler):
     def __init__(self, *args, **kwargs):
         self._sent_date_header = None
         self._sent_server_header = None
         super().__init__(*args, **kwargs)
+
