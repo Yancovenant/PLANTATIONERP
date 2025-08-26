@@ -41,6 +41,7 @@
 
 @service.server.start() do:
 - loadserverwidemodules, (web, base) will be imported.
+    - this would register all the addons module.
 - individually import and append to sys.modules and run post_load function, to do some setup if defined.
 - being read by __manifest__.py
 - setup the correct Server Class, ThreadedServer + APP => inphms.http.root mostly and .run() it.
@@ -58,6 +59,10 @@
     - start() :
         - will set memory limit, ONLY FOR LINUX
         - Setting up signal to be used by signal_handler
+        - if config['http_enabled'] will do @http_spawn()
+            - @http_spawn() do :
+                - self.httpd -> @ThreadedWSGIServerReloadable(network interfaces, port, app)
+                - start thread daemon, targeting the self.httpd.serve_forever
     - signal_handler() :
         - on SIGINT or SIGTERM, will gracefull shutdown first, then force shutdown
         - on MEMORY LIMIT EXCEED, will force shutdown.
@@ -116,6 +121,9 @@
     - @stop() do :
         - closing everything and do cleanup.
 
+
+@ThreadedWSGIServerReloadable do :
+    -
 
 # CONFIG
 
