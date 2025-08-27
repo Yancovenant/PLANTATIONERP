@@ -321,12 +321,34 @@ class FilesystemSessionStore(sessions.FilesystemSessionStore):
         hash_key = sha512(key).digest()[:-1]  # prevent base64 padding
         return base64.urlsafe_b64encode(hash_key).decode('utf-8')
 
+    def get(self, sid):
+        # retro compatibility
+        old_path = super().get_session_filename(sid)
+        session_path = self.get_session_filename(sid)
+        if os.path.isfile(old_path) and not os.path.isfile(session_path):
+            dirname = os.path.dirname(session_path)
+            if not os.path.isdir(dirname):
+                with contextlib.suppress(OSError):
+                    os.mkdir(dirname, 0o0755)
+            with contextlib.suppress(OSError):
+                os.rename(old_path, session_path)
+        return super().get(sid)
+
+    def get_session_filename(self, sid):
+        # scatter sessions across 4096 (64^2) directories
+        if not self.is_valid_key(sid):
+            raise ValueError(f'Invalid session id {sid!r}')
+        sha_dir = sid[:2]
+        dirname = os.path.join(self.path, sha_dir)
+        session_path = os.path.join(dirname, sid)
+        return session_path
+
 class Session(collections.abc.MutableMapping):
     """ Structure containing data persisted across requests. """
     __slots__ = ('can_save', '_Session__data', 'is_dirty', 'is_new',
                  'should_rotate', 'sid')
 
-    def __init__(self, data, sid, new=False):
+    def __init__(self, data, sid, new=False): #ichecked
         self.can_save = True
         self.__data = {}
         self.update(data)
@@ -341,7 +363,7 @@ class Session(collections.abc.MutableMapping):
     def __getitem__(self, item):
         return self.__data[item]
 
-    def __setitem__(self, item, value):
+    def __setitem__(self, item, value): #ichecked
         value = json.loads(json.dumps(value))
         if item not in self.__data or self.__data[item] != value:
             self.is_dirty = True

@@ -224,7 +224,12 @@
                             - patched, just a re match for alphabet,number,-,_, and exactly 84 chars.
                 - if false, would call
                     - @session_store.new():
-                        -
+                        - which would call Session({}, self.generate_key(), True)
+                        - @generate_key():
+                            - patched, to use base64, higher entropy and lower collision chance
+                        - @Session.__init__()
+                            - just populate the data, key, and is_new.
+                            - will also convert and make the `data` into `__data` rather than attributes or items.
 
 # CONFIG
 
