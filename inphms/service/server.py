@@ -619,12 +619,12 @@ class ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.
         super().shutdown_request(request)
 
 class RequestHandler(werkzeug.serving.WSGIRequestHandler):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs): #ichecked
         self._sent_date_header = None
         self._sent_server_header = None
         super().__init__(*args, **kwargs)
     
-    def setup(self):
+    def setup(self): #ichecked
         # timeout to avoid chrome headless preconnect during tests
         if config['test_enable'] or config['test_file']:
             self.timeout = 5
@@ -639,7 +639,7 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
         else:
             super().log_error(format, *args)
     
-    def send_header(self, keyword, value):
+    def send_header(self, keyword, value): #ichecked
         # Prevent `WSGIRequestHandler` from sending the connection close header (compatibility with werkzeug >= 2.1.1 )
         # since it is incompatible with websocket.
         if self.headers.get('Upgrade') == 'websocket' and keyword == 'Connection' and value == 'close':
@@ -675,7 +675,7 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
 
         super().send_header(keyword, value)
     
-    def end_headers(self, *a, **kw):
+    def end_headers(self, *a, **kw): #ichecked
         super().end_headers(*a, **kw)
         # At this point, Werkzeug assumes the connection is closed and will discard any incoming
         # data. In the case of WebSocket connections, data should not be discarded. Replace the
