@@ -1,6 +1,9 @@
 # Part of Inphms, see License file for full copyright and licensing details.
 
 from . import server
+from . import db
+
+#.apidoc title: RPC Services
 
 """ Classes of this module implement the network protocols that the
     Inphms server uses to communicate with remote clients.

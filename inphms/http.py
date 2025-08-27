@@ -539,6 +539,11 @@ def make_request_wrap_methods(attr):
     return getter, setter
 
 class HTTPRequest: #ichecked
+    """
+    Wrapper around the incoming HTTP request with deserialized request
+    parameters, session utilities and request dispatching logic.
+    Control over convenience methods.
+    """
     def __init__(self, environ):
         httprequest = werkzeug.wrappers.Request(environ)
         httprequest.user_agent_class = UserAgent  # use vendored userAgent since it will be removed in 2.1
@@ -622,7 +627,7 @@ class Request:
         return session, dbname
     
     @lazy_property
-    def best_lang(self):
+    def best_lang(self): #ichecked
         lang = self.httprequest.accept_languages.best
         if not lang:
             return None
@@ -641,7 +646,7 @@ class Request:
     # Helpers
     # =====================================================
     
-    def default_lang(self):
+    def default_lang(self): #ichecked
         """Returns default user language according to request specification
 
         :returns: Preferred language if specified or 'en_US'
