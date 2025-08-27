@@ -15,7 +15,6 @@ r"""
     :copyright: 2007 Pallets
     :license: BSD-3-Clause
 """
-
 import logging
 import os
 import re
@@ -35,6 +34,7 @@ def generate_key(salt=None):
     if salt is None:
         salt = repr(salt).encode("ascii")
     return sha1(b"".join([salt, str(time()).encode("ascii"), os.urandom(30)])).hexdigest()
+
 
 class ModificationTrackingDict(CallbackDict):
     __slots__ = ("modified", "on_update")
@@ -59,6 +59,7 @@ class ModificationTrackingDict(CallbackDict):
 
     def __copy__(self):
         return self.copy()
+
 
 class Session(ModificationTrackingDict):
     """Subclass of a dict that keeps track of direct object changes.  Changes
@@ -90,6 +91,7 @@ class Session(ModificationTrackingDict):
         """
         return self.modified
     
+
 class SessionStore(object):
     """Baseclass for all session stores.  The Werkzeug contrib module does not
     implement any useful stores besides the filesystem store, application
@@ -134,8 +136,10 @@ class SessionStore(object):
         """
         return self.session_class({}, sid, True)
 
+
 #: used for temporary files by the filesystem session store
 _fs_transaction_suffix = ".__wz_sess"
+
 
 class FilesystemSessionStore(SessionStore):
     """Simple example session store that saves sessions on the filesystem.
@@ -165,7 +169,7 @@ class FilesystemSessionStore(SessionStore):
         filename_template="werkzeug_%s.sess",
         session_class=None,
         renew_missing=False,
-        mode=0o644,
+        mode=0o644, # file permissions. 1-7 or 000.
     ):
         SessionStore.__init__(self, session_class)
         if path is None:

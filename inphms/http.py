@@ -280,8 +280,46 @@ def db_filter(dbs, host=None):
 
 _base64_urlsafe_re = re.compile(r'^[A-Za-z0-9_-]{84}$')
 _session_identifier_re = re.compile(r'^[A-Za-z0-9_-]{42}$')
+
+
 class FilesystemSessionStore(sessions.FilesystemSessionStore):
     """ Place where to load and save session objects. """
+    def is_valid_key(self, key): #ichecked
+        return _base64_urlsafe_re.match(key) is not None
+
+    def generate_key(self, salt=None):
+        # The generated key is case sensitive (base64) and the length is 84 chars.
+        # In the worst-case scenario, i.e. in an insensitive filesystem (NTFS for example)
+        # taking into account the proportion of characters in the pool and a length
+        # of 42 (stored part in the database), the entropy for the base64 generated key
+        # is 217.875 bits which is better than the 160 bits entropy of a hexadecimal key
+        # with a length of 40 (method ``generate_key`` of ``SessionStore``).
+        # The risk of collision is negligible in practice.
+        # Formulas:
+        #   - L: length of generated word
+        #   - p_char: probability of obtaining the character in the pool
+        #   - n: size of the pool
+        #   - k: number of generated word
+        #   Entropy = - L * sum(p_char * log2(p_char))
+        #   Collision ~= (1 - exp((-k * (k - 1)) / (2 * (n**L))))
+        # Example:
+        #   - L = 42
+        #   - n = 64 // base64 has 64 possible characthers, so the size is 64
+        #   - p_char = 1/64 // 1/64 is the probability of getting a specific character in the n.
+        #
+        #       Entropy = - L * (n * (p_char * math.log2(p_char)))
+        #       print(f"Entropy bits: {Entropy}") ## Output 252 bits.
+        # 
+        #   - k = 1000000 // 1 million keys has been generated.
+        #       Collision = (1 - math.exp((-k * (k - 1)) / (2 * (n**L))))
+        #       print(f"Collision probability: {Collision}") ## Output 0.0 // negligible to happen.
+        #
+        # Note: im not sure why the documentation above said it was 217.875 bits,
+        #       but my calculation is 252 bits. <- higher value entropy.
+        # 
+        key = str(time.time()).encode() + os.urandom(64)
+        hash_key = sha512(key).digest()[:-1]  # prevent base64 padding
+        return base64.urlsafe_b64encode(hash_key).decode('utf-8')
 
 class Session(collections.abc.MutableMapping):
     """ Structure containing data persisted across requests. """
@@ -478,7 +516,7 @@ def make_request_wrap_methods(attr):
 
     return getter, setter
 
-class HTTPRequest:
+class HTTPRequest: #ichecked
     def __init__(self, environ):
         httprequest = werkzeug.wrappers.Request(environ)
         httprequest.user_agent_class = UserAgent  # use vendored userAgent since it will be removed in 2.1
@@ -516,7 +554,7 @@ class Request:
     Wrapper around the incoming HTTP request with deserialized request
     parameters, session utilities and request dispatching logic.
     """
-    def __init__(self, httprequest):
+    def __init__(self, httprequest): #ichecked
         self.httprequest = httprequest
         # self.future_response = FutureResponse()
         self.dispatcher = _dispatchers['http'](self)  # until we match
@@ -1083,9 +1121,6 @@ class Application:
     """ INPHMS WSGI Application """
     # See also: https://www.python.org/dev/peps/pep-3333
     def __call__(self, environ, start_response):
-        print("Application __call__")
-        import traceback
-        traceback.print_stack()
         """
         WSGI application entry point.
 
@@ -1175,7 +1210,7 @@ class Application:
                 _request_stack.pop()
 
     @lazy_property
-    def session_store(self):
+    def session_store(self): #ichecked
         path = inphms.tools.config.session_dir
         _logger.debug('HTTP sessions stored in: %s', path)
         return FilesystemSessionStore(path, session_class=Session, renew_missing=True)

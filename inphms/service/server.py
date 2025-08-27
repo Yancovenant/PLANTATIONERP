@@ -685,7 +685,7 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
             self.rfile = BytesIO()
             self.wfile = BytesIO()
 
-    def make_environ(self):
+    def make_environ(self): #ichecked
         environ = super().make_environ()
         # Add the TCP socket to environ in order for the websocket
         # connections to use it.

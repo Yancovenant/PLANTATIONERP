@@ -176,8 +176,55 @@
         - setting up thread name for different request incoming.
         - would call super().setup() too. so it goes back to werkzeug.
         - werkzeug does, prepares the socket for reading/writing.
-    - 
+    - @log_error() do:
+        - extending to handle if request timed out and test_enable by ours, we use our own logging.
+        - else its using werkzeug
+    - @send_header() do:
+        - extending werkzeug headers, to make sure its not returning twice or more the same date headers,
+        - and server headers.
+        - also handle Websocket connection, to not want send headers, and immediately close connection, to be then switch to ws protocol. early return.
+    - @end_header() do:
+        - extending after werkzeug is flushing the headers, it will assume that the connection is close.
+        - but for websocket, we want to keep the data alive, by changing the rfile, wfile, into BytesIO()
+    - @make_environ() do:
+        - extend the werkzeug method.
+        - then it would set environ['socket'] and if its a websocket connection, force the server http version into HTTP/1.1, since firefox wont accept a websocket connection if version is less than this
 
+@inphms.http.root = e.g Application():
+    - 'this would be called from werkzeug when they try to do `execute(app(environ, start_response))`'
+    - @__call__:
+        - it would remove any `dbname` and `uid` from thread object attribute, security reason.
+        - handle if proxied
+        - then would do with HTTPRequest(environ) as httprequest:
+            - @HTTPRequest() class do:
+                - it would use werkzeug wrappers Request class,
+                - set our own UserAgent class (vendored)
+                - setting up others attr and
+                - make self.environ, self.headers.environ:
+                    - tobe removing the key if its on werkzeug, wsgi, socket, or in wsgi.url_scheme, werkzeug.proxy_fix.orig.
+        - then would append each thread/request to its own LocalStack() for a clean spearation.
+        - each thread has its own stack, thread1, request1, request4, request5, thread2, request2, request6
+        - @Request() class do :
+            - @__init__ do :
+                - setting up basic attributes.
+                - and do self.dispatcher = _dispatchers['http'](self) // Tow-way relationship
+                - @_dispatcher[] :
+                    - this is a variable, that would store, Dispatcher(ABC) Class. whenever any child is inheriting e.g HTTPDispatcher(Dispatcher) it would automatically added with __init_subsclass to _dispatcher[cls.routing_type]
+                    - and (self) is Request class object.
+        - do Request._post_init():
+            - it would get session, and db_name.
+            - @_get_session_and_dbname:
+                - get sid, from httprequest._session_id__,
+                - do safety check if empty or if its not valid.
+                    @root.session_store.is_valid_key(sid):
+                        - @session_store = @FilesystemSessionStore(sessions.FilesystemSessionStore) do:
+                            - inheriting session.FilesystemSessionStore <- vendored.
+                            - storing up our Session class. // no __init__ yet.
+                        - @session_store.is_valid_key(sid):
+                            - patched, just a re match for alphabet,number,-,_, and exactly 84 chars.
+                - if false, would call
+                    - @session_store.new():
+                        -
 
 # CONFIG
 
@@ -189,3 +236,18 @@ will handle parsing command-line arguments like `--port 8080`.
 
 uses optionClass of `@MyOption` so its now default attributes. without overiding the config file values.
 
+# Custom Decorator.
+
+@lazy_property:
+    - it would CALCULATE ONCE, and store it inside a class lazy_property():
+    - will accept any type. to return
+    - need a method/callable to init
+    - Do it once, remember the result, Never do it again.
+    - Example::
+        `root.session_store() <- this is a method, when it has:
+            @lazy_property
+            session_store():
+        it would automatically convert the method of session_store(), 
+        to becomes attribute, root.session_store = value. after the first call.
+        so we can just directly call.
+        root.session_store => because this has now becomes a lazy_property class().`

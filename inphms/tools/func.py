@@ -109,11 +109,11 @@ class lazy_property(typing.Generic[T]):
         self.fget = fget
 
     @typing.overload
-    def __get__(self, obj: None, cls: typing.Any, /) -> typing.Any: ...
+    def __get__(self, obj: None, cls: typing.Any, /) -> typing.Any: ... # just type checking, this method can be called in different ways
     @typing.overload
-    def __get__(self, obj: object, cls: typing.Any, /) -> T: ...
+    def __get__(self, obj: object, cls: typing.Any, /) -> T: ... # just type checking, this method can be called in different ways
 
-    def __get__(self, obj, cls, /):
+    def __get__(self, obj, cls, /): # real function.
         if obj is None:
             return self
         value = self.fget(obj)
