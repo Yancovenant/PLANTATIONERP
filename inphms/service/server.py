@@ -685,3 +685,14 @@ class RequestHandler(werkzeug.serving.WSGIRequestHandler):
             self.rfile = BytesIO()
             self.wfile = BytesIO()
 
+    def make_environ(self):
+        environ = super().make_environ()
+        # Add the TCP socket to environ in order for the websocket
+        # connections to use it.
+        environ['socket'] = self.connection
+        if self.headers.get('Upgrade') == 'websocket':
+            # Since the upgrade header is introduced in version 1.1, Firefox
+            # won't accept a websocket connection if the version is set to
+            # 1.0.
+            self.protocol_version = "HTTP/1.1"
+        return environ
