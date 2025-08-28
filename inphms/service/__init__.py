@@ -2,6 +2,7 @@
 
 from . import server
 from . import db
+from . import model
 
 #.apidoc title: RPC Services
 
