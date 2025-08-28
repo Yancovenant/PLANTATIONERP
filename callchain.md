@@ -232,7 +232,7 @@ python inphms-bin --<config-params>
                                                                                                                                                                         - self.sid = sid
                                                                                                                                                 - else #`root.session_store.get(sid) -- root.session_store == FilesystemSessionStore`:
                                                                                                                                                     - `FilesystemSessionStore.get(sid)`:
-                                                                                                                                                        -
+                                                                                                                                                        - # NOT DONE
                                                                                                                                                     - session.sid = sid
                                                                                                                                                 - session -- setdefault() attr. + default_lang == self.default_lang()
                                                                                                                                                 - if session.db and `db_filter([session.db], host=host)`:
@@ -384,8 +384,14 @@ python inphms-bin --<config-params>
                                                                                                                                                                             - inphms.api.Environment(cr=cr) @see api.py
                                                                                                                                                                         - try:
                                                                                                                                                                             - return `service_model.retrying(func, env=self.env)`:
-                                                                                                                                                                                - 
-                                                                                                                                                    - self._set_request_dispatcher(rule)
+                                                                                                                                                                                - result from func() @see model.py
+                                                                                                                                                                        - Except psycopg2.errors.ReadOnlySqlTransaction as exc:
+                                                                                                                                                                            - continue
+                                                                                                                                                                        - Except Exception as exc:
+                                                                                                                                                                            - `raise`
+                                                                                                                                                    - `self._set_request_dispatcher(rule)`:
+                                                                                                                                                        - routing = rule.endpoint.routing
+                                                                                                                                                        - 
                                                                                                                                                     - readonly = rule.endpoint.routing['readonly']
                                                                                                                                                     - if callable(readonly):
                                                                                                                                         - Except RegistryError as e:

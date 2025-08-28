@@ -856,7 +856,7 @@ class Request:
                     continue
                 except Exception as exc:
                     if isinstance(exc, HTTPException) and exc.code is None:
-                        raise  # bubble up to odoo.http.Application.__call__
+                        raise  # bubble up to inphms.http.Application.__call__
                     if 'werkzeug' in config['dev_mode'] and self.dispatcher.routing_type != 'json':
                         raise  # bubble up to werkzeug.debug.DebuggedApplication
                     if not hasattr(exc, 'error_response'):

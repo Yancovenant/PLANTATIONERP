@@ -80,7 +80,7 @@ def retrying(func, env):
 
     :param callable func: The function to call, you can pass arguments
         using :func:`functools.partial`:.
-    :param odoo.api.Environment env: The environment where the registry
+    :param inphms.api.Environment env: The environment where the registry
         and the cursor are taken.
     """
     try:
