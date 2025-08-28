@@ -221,6 +221,7 @@ def memory_info(process): #ichecked
         return pmem.rss
     return pmem.vms
 
+# DONE
 class CommonServer(object): #ichecked
     _on_stop_funcs = []
     def __init__(self, app): #ichecked
@@ -533,6 +534,8 @@ class ThreadedServer(CommonServer):
 #----------------------------------------------------------
 # Werkzeug WSGI servers patched
 #----------------------------------------------------------
+
+# DONE
 class LoggingBaseWSGIServerMixIn(object): #ichecked
     def handle_error(self, request, client_address):
         t, e, _ = sys.exc_info()
@@ -542,6 +545,7 @@ class LoggingBaseWSGIServerMixIn(object): #ichecked
             return
         _logger.exception('Exception happened during processing of request from %s', client_address)
 
+# DONE
 class ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.ThreadedWSGIServer):
     """ werkzeug Threaded WSGI Server patched to allow reusing a listen socket
     given by the environment, this is used by autoreload to keep the listen
@@ -618,6 +622,7 @@ class ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.
             self.http_threads_sem.release()
         super().shutdown_request(request)
 
+# DONE
 class RequestHandler(werkzeug.serving.WSGIRequestHandler):
     def __init__(self, *args, **kwargs): #ichecked
         self._sent_date_header = None

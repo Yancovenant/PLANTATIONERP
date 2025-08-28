@@ -11,7 +11,7 @@ python inphms-bin --<config-params>
 
 ---
 
-#### Entry Point
+#### Entry Point CLI & Executable Service Installer
 - `inphms.cli.main()`
     - if `--addons-path` handle using:
         - `inphms.tools.config._parse_config(args[0])` **@see config.py**
@@ -58,6 +58,9 @@ python inphms-bin --<config-params>
                         - `self.start(stop=stop)`:
                             - `set_limit_memory_hard()`
                             - `self.http_spawn()`
+                                - ---
+                                - Wrapper around werkzeug library
+                                - ---
                                 - self.httpd = ThreadedWSGIServerReloadable(self.interface, self.port, self.app)
                                     - `ThreadedWSGIServerReloadable(LoggingBaseWSGIServerMixIn, werkzeug.serving.ThreadedWSGIServer):`
                                         - `__init__(self, interface, port, app):`
@@ -98,9 +101,223 @@ python inphms-bin --<config-params>
                                                                     - self.socket.listen(self.request_queue_size)
                                                 - `Except error`:
                                                     - self.server_close():
-                                                        -
-                                                
+                                                        - `super().server_close():`
+                                                            - self.socket.close()
+                                                        - self._threads.join()
+                                                - self.ssl_context = (optional)
 
                                             - self.daemon_threads = False
-    
+                                - threading.Thread(target=self.httpd.serve_forever, name="inphms.service.httpd", daemon=True)
+                                    - `self.httpd.serve_forever() == ThreadedWSGIServer.serve_forever()`:
+                                        - `super().serve_forever(poll_interval=0.5):`
+                                            - `self._handle_request_noblock():`
+                                                - if max_http_threads and not self.http_threads_sem.acquire(timeout=0.1):
+                                                    - return
+                                                - `super()._handle_request_noblock():`
+                                                    - `self.get_request()`:
+                                                        - self.socket.accept()
+                                                    - `self.verify_request(request, client_address)`:
+                                                        - Return True
+                                                    - TRUE:
+                                                        - `self.process_request(request, client_address)`:
+                                                            - threading.Thread(target=self.process_request_thread, args=(request, client_address))
+                                                                - `self.process_request_thread(request, client_address)`:
+                                                                    - `self.finish_request(request, client_address)`:
+                                                                        - `self.RequestHandlerClass(request, client_address, self)`
+                                                                            - instance of RequestHandler() <- ours.
+                                                                            - `RequestHandler.__init__(self, request, client_address, self)`:
+                                                                                - self._sent_date_header = None
+                                                                                - self._sent_server_header = None
+                                                                                - `super().__init__(request, client_address, self)`:
+                                                                                    - self.request = request
+                                                                                    - self.client_address = client_address
+                                                                                    - self.server = server
+                                                                                    - `self.setup()`:
+                                                                                        - if test_enable or test_file: self.timeout = 5
+                                                                                        - `super().setup()`:
+                                                                                            - self.connection = self.request
+                                                                                            - self.connection.settimeout(self.timeout)
+                                                                                            - self.rfile = self.connection.makefile('rb', self.rbufsize)
+                                                                                            - if self.wbufsize == 0:
+                                                                                                - self.wfile = _SocketWriter(self.connection)
+                                                                                            - else:
+                                                                                                - self.wfile = self.connection.makefile('wb', self.wbufsize)
+                                                                                        - me = threading.current_thread()
+                                                                                        - me.name = 'inphms.service.http.request.%s' % (me.ident,)
+                                                                                    - `self.handle()`:
+                                                                                        - try:
+                                                                                            - `super().handle()`:
+                                                                                                - self.close_connection = True
+                                                                                                - `self.handle_one_request()`:
+                                                                                                    - self.raw_requestline = self.rfile.readline(65537)
+                                                                                                    - if not `self.parse_request()`:
+                                                                                                        - return
+                                                                                                    - mname = 'do_' + self.command
+                                                                                                    - method = `getattr(self, mname)`
+                                                                                                        - `__getattr__`:
+                                                                                                            - if name.startswith("do_"):
+                                                                                                                - return self.run_wsgi
+                                                                                                            - return getattr(super(), name)
+                                                                                                    - `method()` == self.run_wsgi():
+                                                                                                        - `self.run_wsgi()`:
+                                                                                                            - `self.environ = self.make_environ()`:
+                                                                                                                - environ = `super().make_environ()`:
+                                                                                                                    - return environ
+                                                                                                                - environ['socket'] = self.connection
+                                                                                                                - if self.headers.get('Upgrade') == 'websocket':
+                                                                                                                    - self.protocol_version = "HTTP/1.1"
+                                                                                                                - return environ
+                                                                                                            - try:
+                                                                                                                - `execute(self.server.app)`:
+                                                                                                                    - `self.server.app(self.environ, self.start_response)` == inphms.http.root == Application(self.environ, self.start_response)
+                                                                                                                        - `Application.__call__(environ, start_response)`: // because its being called, init already before.
+                                                                                                                            - del current_thread.dbname
+                                                                                                                            - del current_thread.uid
+                                                                                                                            - with HTTPRequest(environ) as httprequest:
+                                                                                                                                - `HTTPRequest.__init__(self, environ)`:
+                                                                                                                                    - httprequest = werkzeug.wrappers.Request(environ) <- werkzeug library, wrapping.
+                                                                                                                                    - self._session_id__ = httprequest.cookies.get('session_id')
+                                                                                                                                    - self.__wrapped = httprequest
+                                                                                                                                    - self.__environ = self.__wrapped.environ
+                                                                                                                                    - ```python
+                                                                                                                                        self.environ = self.headers.environ = {
+                                                                                                                                            key: value
+                                                                                                                                            for key, value in self.__environ.items()
+                                                                                                                                            if (not key.startswith(('werkzeug.', 'wsgi.', 'socket')) or key in ['wsgi.url_scheme', 'werkzeug.proxy_fix.orig'])
+                                                                                                                                        }
+                                                                                                                                      ```
+                                                                                                                                - ```python
+                                                                                                                                    HTTPRequest.attributes = [
+                                                                                                                                        ...HTTPREQUEST_ATTRIBUTES, each wrapped into property,
+                                                                                                                                        get, set,
+                                                                                                                                        into self.__wrapped.__attr__
+                                                                                                                                    ]
+                                                                                                                                  ```
+                                                                                                                                - request = `Request(httprequest)`:
+                                                                                                                                    - `Request.__init__(self, httprequest)`:
+                                                                                                                                        - self.httprequest = httprequest
+                                                                                                                                        - self.dispatcher = _dispatchers['http'](self)
+                                                                                                                                        - self.params = {}
+                                                                                                                                        - self.registry = None
+                                                                                                                                        - self.env = None
+                                                                                                                                - _request_stack.push(request)
+                                                                                                                                - try:
+                                                                                                                                    - `request._post_init()`:
+                                                                                                                                        - self.session, self.db = `self._get_session_and_dbname()`:
+                                                                                                                                            - `self._get_session_and_dbname()`:
+                                                                                                                                                - sid = self.httprequest._session_id__
+                                                                                                                                                - if not sid or not `root.session_store.is_valid_key(sid)`:
+                                                                                                                                                    - `root.session_store <--> .is_valid_key(sid)`:
+                                                                                                                                                        - return `FilesystemSessionStore(inphms.tools.config.session_dir, session_class=Session, renew_missing=True)`
+                                                                                                                                                            - `FilesystemSessionStore.__init__(self, path, session_class=Session, renew_missing=True)`:
+                                                                                                                                                                - `SessionStore.__init__(self, session_class=Session)`:
+                                                                                                                                                                    - self.session_class = session_class or Session <- default.
+                                                                                                                                                                - self.path = path or tempfile.gettempdir()
+                                                                                                                                                                - self.renew_missing = renew_missing
+                                                                                                                                                                - self.mode = mode
+                                                                                                                                                            - `.is_valid_key(sid)`:
+                                                                                                                                                                - return `_base64_urlsafe_re.match(key) is not None`
+                                                                                                                                                        - `root.session_store.new()`:
+                                                                                                                                                            - `FilesystemSessionStore.new()`:
+                                                                                                                                                                - return `self.session_class({}, self.generate_key(), True)`:
+                                                                                                                                                                    - `self.generate_key()`:
+                                                                                                                                                                        - return base64.urlsafe_b64encode(sha512(str(time.time() + os.urandom(64)).encode()).digest()[:-1]).decode('utf-8')
+                                                                                                                                                                    - `Session.__init__(self, data, sid, new=True)`:
+                                                                                                                                                                        - self.can_save = True
+                                                                                                                                                                        - self.__data = {}
+                                                                                                                                                                        - self.update(data)
+                                                                                                                                                                        - self.is_dirty = False
+                                                                                                                                                                        - self.is_new = new
+                                                                                                                                                                        - self.should_rotate = False
+                                                                                                                                                                        - self.sid = sid
+                                                                                                                                                - else #`root.session_store.get(sid) -- root.session_store == FilesystemSessionStore`:
+                                                                                                                                                    - `FilesystemSessionStore.get(sid)`:
+                                                                                                                                                        -
+                                                                                                                                                    - session.sid = sid
+                                                                                                                                                - session -- setdefault() attr. + default_lang == self.default_lang()
+                                                                                                                                                - if session.db and `db_filter([session.db], host=host)`:
+                                                                                                                                                    - `db_filter(dbs, host=host or None)`:
+                                                                                                                                                        - if config['dbfilter']:
+                                                                                                                                                            - return [db for db in dbs if dbfilter_re.match(db)]
+                                                                                                                                                        - if config['db_name']:
+                                                                                                                                                            - exposed_dbs = {db.strip() for db in config['db_name'].split(',')}
+                                                                                                                                                            - return sorted(exposed_dbs.intersection(dbs))
+                                                                                                                                                        - return list(dbs)
+                                                                                                                                                - else `all_dbs = db_list(force=True, host=host)`:
+                                                                                                                                                    - `db_list(force=force or False, host=host or None)`:
+                                                                                                                                                        - try:
+                                                                                                                                                            - `dbs = inphms.service.db.list_dbs(force)` @see db.py
+                                                                                                                                                            - except psycopg2.OperationalError:
+                                                                                                                                                                - return []
+                                                                                                                                                            - return `db_filter(dbs, host)`
+                                                                                                                                                - if session.db != dbname:
+                                                                                                                                                    - if session.db: `session.logout(keep_db=False)`:
+                                                                                                                                                        - 
+                                                                                                                                                    - session.db = dbname
+                                                                                                                                                - session.is_dirty = False
+                                                                                                                                                - Return session, dbname
+                                                                                                                                        - self._post_init = None
+                                                                                                                                    - if `self.get_static_file(self.httprequest.path)`:
+                                                                                                                                        - `self.get_static_file(url, host='')`:
+                                                                                                                                            - return `file_path(f'{module}/static/{resource}')` @see misc.py or None
+                                                                                                                                    - elif `request.db`:
+                                                                                                                                        - with `request._get_profiler_context_manager()`:
+                                                                                                                                            - ...
+                                                                                                                                            - `response = request._serve_db()`:
+                                                                                                                                                - 
+                                                                                                                                        - Except RegistryError as e:
+                                                                                                                                            - `request.session.logout()`:
+                                                                                                                                                -
+                                                                                                                                            - if (self.httprequest.path.startswith('/inphms/') or self.httprequest.path in ('/inphms', '/web', '/web/login', '/test_http/ensure_db')):
+                                                                                                                                                - `request.reroute(self.httprequest.path, url_encode(self.httprequest.args.copy().pop('db', None)))`
+                                                                                                                                            - `response = request._serve_nodb()`:
+                                                                                                                                    - else:
+                                                                                                                                        - `response = request._serve_nodb()`:
+                                                                                                                                    - return `response(environ, start_response)`
+                                                                                                                                - Except Exception:
+                                                                                                                                    - ``
+                                                                                                                                - Finally:
+                                                                                                                                    - `_request_stack.pop()`
+                                                                                                            - Except Exception:
+                                                                                                                - `self.connection_dropped(e, self.environ)`
+                                                                                                            - Except:
+                                                                                                                - `execute(InternalServerError())`
+                                                                                                    - self.wfile.flush()
+                                                                                                - while not self.close_connection:
+                                                                                                    - self.handle_one_request()
+                                                                                        - Except Exception:
+                                                                                            - self.connection_dropped(e)
+                                                                                        - Except:
+                                                                                            - if self.server.ssl_context is not None and is_ssl_error(e):
+                                                                                                - `self.log_error("SSL error occurred: %s", e)`
+                                                                                            - else:
+                                                                                                - raise
+                                                                                    - `self.finish()`:
+                                                                    - Except Exception:
+                                                                        - `self.handle_error(request, client_address)`
+                                                                    - Finally:
+                                                                        - `self.shutdown_request(request)`
+                                                        - Except Exception:
+                                                            - `self.handle_error(request, client_address)`
+                                                            - self.shutdown_request(request)
+                                                        - Except:
+                                                            - self.shutdown_request(request)
+                                                            - raise
+                                                    - ELSE:
+                                                        - `self.shutdown_request(request)`:
+                                            - `self.service_actions()`
+                                        - `finnaly: self.server_close()`
+                            - `self.cron_spawn():`
+                                - threading.Thread(target=self.cron_thread(i), name="inphms.service.cron.cron%d" % i)
+                                - `self.cron_thread(i)`:
+                                    - `inphms.sql_db.db_connect('postgres')`
+                                    - `with contextlib.closing(conn.cursor()) as cr:`
+                                        - `_run_cron(cr):`
+                                            - cr.execute() @see sql_db.py
+                                            - cr.commit() @see sql_db.py
+                                            - cr._cnx.poll() @see sql_db.py
+                                            - `registries = inphms.modules.registry.Registry.registries` @see registry.py
+                                            - `ir_cron._process_jobs(db_name)` @see inphms/addons/base/models/ir_cron.py
+                                        - `cr._cnx.close()` @see sql_db.py
+
 - `config = configmanager() == inphms.tools.config`

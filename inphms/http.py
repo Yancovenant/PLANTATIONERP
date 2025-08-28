@@ -86,7 +86,7 @@ except ImportError:
 
 import inphms
 from .tools import (
-    parse_version, config,
+    parse_version, config, file_path
 )
 from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
@@ -219,7 +219,7 @@ def content_disposition(filename, disposition_type='attachment'):
     )
 
 
-def db_list(force=False, host=None):
+def db_list(force=False, host=None): #ichecked
     """
     Get the list of available databases.
 
@@ -235,7 +235,7 @@ def db_list(force=False, host=None):
         return []
     return db_filter(dbs, host)
 
-def db_filter(dbs, host=None):
+def db_filter(dbs, host=None): #ichecked
     """
     Return the subset of ``dbs`` that match the dbfilter or the dbname
     server configuration. In case neither are configured, return ``dbs``
@@ -287,7 +287,7 @@ class FilesystemSessionStore(sessions.FilesystemSessionStore):
     def is_valid_key(self, key): #ichecked
         return _base64_urlsafe_re.match(key) is not None
 
-    def generate_key(self, salt=None):
+    def generate_key(self, salt=None): #ichecked
         # The generated key is case sensitive (base64) and the length is 84 chars.
         # In the worst-case scenario, i.e. in an insensitive filesystem (NTFS for example)
         # taking into account the proportion of characters in the pool and a length
@@ -1362,7 +1362,7 @@ class Application:
         _logger.debug('HTTP sessions stored in: %s', path)
         return FilesystemSessionStore(path, session_class=Session, renew_missing=True)
 
-    def get_static_file(self, url, host=''):
+    def get_static_file(self, url, host=''): #ichecked
         """
         Get the full-path of the file if the url resolves to a local
         static file, otherwise return None.
