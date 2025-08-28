@@ -96,7 +96,7 @@ from .tools import (
     profiler, unique
 )
 from .tools.func import lazy_property, filter_kwargs
-# from .tools.misc import submap
+from .tools.misc import submap
 from .tools.facade import Proxy, ProxyFunc, ProxyAttr
 from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
@@ -280,6 +280,9 @@ def db_filter(dbs, host=None): #ichecked
         return sorted(exposed_dbs.intersection(dbs))
 
     return list(dbs)
+
+def is_cors_preflight(request, endpoint):
+    return request.httprequest.method == 'OPTIONS' and endpoint.routing.get('cors', False)
 
 # =========================================================
 # Session
@@ -724,6 +727,47 @@ class Request:
         }
         return params
 
+    def _set_request_dispatcher(self, rule):
+        routing = rule.endpoint.routing
+        print(f"routing: {routing}")
+        dispatcher_cls = _dispatchers[routing['type']]
+        print(f"dispatcher_cls: {dispatcher_cls}")
+        if (not is_cors_preflight(self, rule.endpoint)
+            and not dispatcher_cls.is_compatible_with(self)):
+            compatible_dispatchers = [
+                disp.routing_type
+                for disp in _dispatchers.values()
+                if disp.is_compatible_with(self)
+            ]
+            raise BadRequest(f"Request inferred type is compatible with {compatible_dispatchers} but {routing['routes'][0]!r} is type={routing['type']!r}.")
+        self.dispatcher = dispatcher_cls(self)
+    
+    def reroute(self, path, query_string=None):
+        """
+        Rewrite the current request URL using the new path and query
+        string. This act as a light redirection, it does not return a
+        3xx responses to the browser but still change the current URL.
+        """
+        # WSGI encoding dance https://peps.python.org/pep-3333/#unicode-issues
+        if isinstance(path, str):
+            path = path.encode('utf-8')
+        path = path.decode('latin1', 'replace')
+
+        if query_string is None:
+            query_string = request.httprequest.environ['QUERY_STRING']
+
+        # Change the WSGI environment
+        environ = self.httprequest._HTTPRequest__environ.copy()
+        environ['PATH_INFO'] = path
+        environ['QUERY_STRING'] = query_string
+        environ['RAW_URI'] = f'{path}?{query_string}'
+        # REQUEST_URI left as-is so it still contains the original URI
+
+        # Create and expose a new request from the modified WSGI env
+        httprequest = HTTPRequest(environ)
+        threading.current_thread().url = httprequest.url
+        self.httprequest = httprequest
+
     # =====================================================
     # Routing
     # =====================================================
@@ -765,6 +809,17 @@ class Request:
         no_fallback.__context__ = not_found  # During handling of {not_found}, {no_fallback} occurred:
         no_fallback.error_response = self.registry['ir.http']._handle_error(no_fallback)
         raise no_fallback
+    
+    def _serve_ir_http(self, rule, args):
+        """
+        Called when a controller match the request path. Delegate to
+        ``ir.http`` to serve a response.
+        """
+        self.registry['ir.http']._authenticate(rule.endpoint)
+        self.registry['ir.http']._pre_dispatch(rule, args)
+        response = self.dispatcher.dispatch(rule.endpoint, args)
+        self.registry['ir.http']._post_dispatch(response)
+        return response
 
     def _transactioning(self, func, readonly):
         """
@@ -855,10 +910,14 @@ class Request:
         database-free environment.
         """
         router = root.nodb_routing_map.bind_to_environ(self.httprequest.environ)
+        print(f"router: {router}")
         rule, args = router.match(return_rule=True)
+        print(f"rule: {rule}, args: {args}")
         self._set_request_dispatcher(rule)
+        print(f"self.dispatcher: {self.dispatcher}")
         self.dispatcher.pre_dispatch(rule, args)
         response = self.dispatcher.dispatch(rule.endpoint, args)
+        print(f"response: {response}")
         self.dispatcher.post_dispatch(response)
         return response
 
@@ -942,6 +1001,7 @@ class _Response(werkzeug.wrappers.Response):
             self.response.append(self.render())
             self.template = None
 
+# DONE
 class Response(Proxy):
     _wrapped__ = _Response
 
@@ -1020,6 +1080,7 @@ class Response(Proxy):
 # Core type-specialized dispatchers
 # =========================================================
 
+# DONE
 _dispatchers = {}
 class Dispatcher(ABC): # ABC - Abstract Base Class
     routing_type: str
@@ -1096,6 +1157,7 @@ class Dispatcher(ABC): # ABC - Abstract Base Class
         any exception while serving a request.
         """
 
+# DONE
 class HttpDispatcher(Dispatcher):
     routing_type = 'http'
 
@@ -1340,10 +1402,11 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
 
             Ctrl = type(name, tuple(reversed(leaf_controllers)), {})
             yield Ctrl()
-
+    
     for ctrl in build_controllers():
+        print(f"ctrl: {ctrl}")
         for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
-
+            print(f"method_name: {method_name}, method: {method}")
             # Skip this method if it is not @route decorated anywhere in
             # the hierarchy
             def is_method_a_route(cls):
@@ -1527,11 +1590,14 @@ class Application:
     def nodb_routing_map(self):
         nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
         for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
+            print(f"url: {url}, endpoint: {endpoint}")
             routing = submap(endpoint.routing, ROUTING_KEYS)
+            print(f"routing: {routing}")
             if routing['methods'] is not None and 'OPTIONS' not in routing['methods']:
                 routing['methods'] = [*routing['methods'], 'OPTIONS']
             rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
             rule.merge_slashes = False
+            print(f"rule: {rule}")
             nodb_routing_map.add(rule)
 
         return nodb_routing_map

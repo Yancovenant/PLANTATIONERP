@@ -52,3 +52,11 @@ class AccessDenied(UserError):
         self.with_traceback(None)
         self.__cause__ = None
         self.traceback = ('', '', '')
+
+class ValidationError(UserError):
+    """Violation of python constraints.
+
+    .. admonition:: Example
+
+        When you try to create a new user with a login which already exist in the db.
+    """

@@ -58,6 +58,8 @@ __all__ = [
     'file_open',
     'reverse_enumerate',
     'frozendict',
+    'unique',
+    'DotDict',
 ]
 
 _logger = logging.getLogger(__name__)
@@ -293,7 +295,33 @@ class Callbacks:
         """ Remove all callbacks and data from self. """
         self._funcs.clear()
         self.data.clear()
-    
+
+def unique(it: Iterable[T]) -> Iterator[T]:
+    """ "Uniquifier" for the provided iterable: will output each element of
+    the iterable once.
+
+    The iterable's elements must be hashahble.
+
+    :param Iterable it:
+    :rtype: Iterator
+    """
+    seen = set()
+    for e in it:
+        if e not in seen:
+            seen.add(e)
+            yield e
+
+def submap(mapping: Mapping[K, T], keys: Iterable[K]) -> Mapping[K, T]:
+    """
+    Get a filtered copy of the mapping where only some keys are present.
+
+    :param Mapping mapping: the original dict-like structure to filter
+    :param Iterable keys: the list of keys to keep
+    :return dict: a filtered dict copy of the original mapping
+    """
+    keys = frozenset(keys)
+    return {key: mapping[key] for key in mapping if key in keys}
+
 class frozendict(dict[K, T], typing.Generic[K, T]):
     """ An implementation of an immutable dictionary. """
     __slots__ = ()
@@ -362,3 +390,15 @@ class ReadonlyDict(Mapping[K, T], typing.Generic[K, T]):
 
     def __iter__(self):
         return iter(self.__data)
+
+class DotDict(dict):
+    """Helper for dot.notation access to dictionary attributes
+
+        E.g.
+          foo = DotDict({'bar': False})
+          return foo.bar
+    """
+    def __getattr__(self, attrib):
+        val = self.get(attrib)
+        return DotDict(val) if isinstance(val, dict) else val
+
