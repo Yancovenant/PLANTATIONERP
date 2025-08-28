@@ -50,6 +50,8 @@ from zlib import adler32
 
 import babel.core
 
+from inphms.modules.registry import Registry
+
 try:
     import geoip2.database
     import geoip2.models
@@ -85,14 +87,19 @@ except ImportError:
     from .tools._vendor.send_file import send_file as _send_file
 
 import inphms
+from .exceptions import UserError, AccessError, AccessDenied
+from .modules.module import get_manifest
+from .modules.registry import Registry
+from .service import security, model as service_model
 from .tools import (
-    parse_version, config, file_path
+    parse_version, config, file_path,
+    profiler, unique
 )
+from .tools.func import lazy_property, filter_kwargs
+# from .tools.misc import submap
+from .tools.facade import Proxy, ProxyFunc, ProxyAttr
 from .tools._vendor import sessions
 from .tools._vendor.useragents import UserAgent
-from .exceptions import UserError, AccessError, AccessDenied
-from .tools.func import lazy_property, filter_kwargs
-from .tools.facade import Proxy, ProxyFunc, ProxyAttr
 
 
 _logger = logging.getLogger(__name__)
@@ -114,7 +121,7 @@ CSRF_TOKEN_SALT = 60 * 60 * 24 * 365
 DEFAULT_LANG = 'en_US'
 
 # The dictionary to initialise a new session with.
-def get_default_session():
+def get_default_session(): #ichecked
     return {
         'context': {},  # 'lang': request.default_lang()  # must be set at runtime
         'db': None,
@@ -369,7 +376,7 @@ class Session(collections.abc.MutableMapping):
             self.is_dirty = True
         self.__data[item] = value
 
-    def __delitem__(self, item):
+    def __delitem__(self, item): #ichecked
         del self.__data[item]
         self.is_dirty = True
 
@@ -388,7 +395,7 @@ class Session(collections.abc.MutableMapping):
         else:
             self[key] = val
 
-    def clear(self):
+    def clear(self): #ichecked
         self.__data.clear()
         self.is_dirty = True
 
@@ -591,11 +598,11 @@ class Request:
         self.registry = None
         self.env = None
 
-    def _post_init(self):
+    def _post_init(self): #ichecked
         self.session, self.db = self._get_session_and_dbname()
         self._post_init = None
     
-    def _get_session_and_dbname(self):
+    def _get_session_and_dbname(self): #ichecked
         sid = self.httprequest._session_id__
         if not sid or not root.session_store.is_valid_key(sid):
             session = root.session_store.new()
@@ -626,6 +633,20 @@ class Request:
         session.is_dirty = False
         return session, dbname
     
+    def _open_registry(self):
+        try:
+            registry = Registry(self.db)
+            # use a RW cursor! Sequence data is not replicated and would
+            # be invalid if accessed on a readonly replica. Cfr task-4399456
+            cr_readwrite = registry.cursor(readonly=False)
+            registry = registry.check_signaling(cr_readwrite)
+        except (AttributeError, psycopg2.OperationalError, psycopg2.ProgrammingError) as e:
+            raise RegistryError(f"Cannot get registry {self.db}") from e
+        return registry, cr_readwrite
+
+    # =====================================================
+    # Getters and setters
+    # =====================================================
     @lazy_property
     def best_lang(self): #ichecked
         lang = self.httprequest.accept_languages.best
@@ -654,6 +675,55 @@ class Request:
         """
         return self.best_lang or DEFAULT_LANG
 
+    def _get_profiler_context_manager(self): #ichecked
+        """
+        Get a profiler when the profiling is enabled and the requested
+        URL is profile-safe. Otherwise, get a context-manager that does
+        nothing.
+        """
+        if self.session.profile_session and self.db:
+            if self.session.profile_expiration < str(datetime.now()):
+                # avoid having session profiling for too long if user forgets to disable profiling
+                self.session.profile_session = None
+                _logger.warning("Profiling expiration reached, disabling profiling")
+            elif 'set_profiling' in self.httprequest.path:
+                _logger.debug("Profiling disabled on set_profiling route")
+            elif self.httprequest.path.startswith('/websocket'):
+                _logger.debug("Profiling disabled for websocket")
+            elif inphms.evented:
+                # only longpolling should be in a evented server, but this is an additional safety
+                _logger.debug("Profiling disabled for evented server")
+            else:
+                try:
+                    return profiler.Profiler(
+                        db=self.db,
+                        description=self.httprequest.full_path,
+                        profile_session=self.session.profile_session,
+                        collectors=self.session.profile_collectors,
+                        params=self.session.profile_params,
+                    )._get_cm_proxy()
+                except Exception:
+                    _logger.exception("Failure during Profiler creation")
+                    self.session.profile_session = None
+
+        return contextlib.nullcontext()
+
+    def get_http_params(self): #ichecked
+        """
+        Extract key=value pairs from the query string and the forms
+        present in the body (both application/x-www-form-urlencoded and
+        multipart/form-data).
+
+        :returns: The merged key-value pairs.
+        :rtype: dict
+        """
+        params = {
+            **self.httprequest.args,
+            **self.httprequest.form,
+            **self.httprequest.files
+        }
+        return params
+
     # =====================================================
     # Routing
     # =====================================================
@@ -678,6 +748,66 @@ class Request:
         except OSError:  # cover both missing file and invalid permissions
             raise NotFound(f'File "{path}" not found in module {module}.\n')
     
+    def _serve_ir_http_fallback(self, not_found):
+        """
+        Called when no controller match the request path. Delegate to
+        ``ir.http._serve_fallback`` to give modules the opportunity to
+        find an alternative way to serve the request. In case no module
+        provided a response, a generic 404 - Not Found page is returned.
+        """
+        self.params = self.get_http_params()
+        response = self.registry['ir.http']._serve_fallback()
+        if response:
+            self.registry['ir.http']._post_dispatch(response)
+            return response
+
+        no_fallback = NotFound()
+        no_fallback.__context__ = not_found  # During handling of {not_found}, {no_fallback} occurred:
+        no_fallback.error_response = self.registry['ir.http']._handle_error(no_fallback)
+        raise no_fallback
+
+    def _transactioning(self, func, readonly):
+        """
+        Call ``func`` within a new SQL transaction.
+
+        If ``func`` performs a write query (insert/update/delete) on a
+        read-only transaction, the transaction is rolled back, and
+        ``func`` is called again in a read-write transaction.
+
+        Other errors are handled by ``ir.http._handle_error`` within
+        the same transaction.
+
+        Note: This function does not reset any state set on ``request``
+        and ``request.env`` upon returning. Therefore, any recordset
+        set on request during one transaction WILL NOT be usable inside
+        the following transactions unless the recordset is reset with
+        ``with_env(request.env)``. This is especially a concern between
+        ``_match`` and other ``ir.http`` methods, as ``_match`` is
+        called inside its own dedicated transaction.
+        """
+        for readonly_cr in (True, False) if readonly else (False,):
+            threading.current_thread().cursor_mode = (
+                'ro' if readonly_cr
+                else 'ro->rw' if readonly
+                else 'rw'
+            )
+
+            with contextlib.closing(self.registry.cursor(readonly=readonly_cr)) as cr:
+                self.env = self.env(cr=cr)
+                try:
+                    return service_model.retrying(func, env=self.env)
+                except psycopg2.errors.ReadOnlySqlTransaction as exc:
+                    _logger.warning("%s, retrying with a read/write cursor", exc.args[0].rstrip(), exc_info=True)
+                    continue
+                except Exception as exc:
+                    if isinstance(exc, HTTPException) and exc.code is None:
+                        raise  # bubble up to odoo.http.Application.__call__
+                    if 'werkzeug' in config['dev_mode'] and self.dispatcher.routing_type != 'json':
+                        raise  # bubble up to werkzeug.debug.DebuggedApplication
+                    if not hasattr(exc, 'error_response'):
+                        exc.error_response = self.registry['ir.http']._handle_error(exc)
+                    raise
+
     def _serve_db(self):
         """
         Prepare the user session and load the ORM before forwarding the
@@ -731,6 +861,7 @@ class Request:
         response = self.dispatcher.dispatch(rule.endpoint, args)
         self.dispatcher.post_dispatch(response)
         return response
+
 
 class _Response(werkzeug.wrappers.Response):
     """

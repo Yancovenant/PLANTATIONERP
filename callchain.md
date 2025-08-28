@@ -252,7 +252,19 @@ python inphms-bin --<config-params>
                                                                                                                                                             - return `db_filter(dbs, host)`
                                                                                                                                                 - if session.db != dbname:
                                                                                                                                                     - if session.db: `session.logout(keep_db=False)`:
-                                                                                                                                                        - 
+                                                                                                                                                        - `session.logout(keep_db=keep_db or False)`:
+                                                                                                                                                            - db = self.db if keep_db or `get_default_session()['db']`:
+                                                                                                                                                                - `get_default_session()['db']`:
+                                                                                                                                                                    - return None
+                                                                                                                                                            - `self.clear()`:
+                                                                                                                                                                - `self.__data.clear()` <- clear everything inside dict.
+                                                                                                                                                                - self.is_dirty = True
+                                                                                                                                                            - self.update(get_default_session(), db=db, debug=debug) # None
+                                                                                                                                                            - self.context['lang'] = request.default_lang() if request else DEFAULT_LANG
+                                                                                                                                                            - self.should_rotate = True
+                                                                                                                                                            - if request and `request.env`:
+                                                                                                                                                                - `request.env['ir.http']._post_logout()`:
+                                                                                                                                                                    - 
                                                                                                                                                     - session.db = dbname
                                                                                                                                                 - session.is_dirty = False
                                                                                                                                                 - Return session, dbname
@@ -262,12 +274,122 @@ python inphms-bin --<config-params>
                                                                                                                                             - return `file_path(f'{module}/static/{resource}')` @see misc.py or None
                                                                                                                                     - elif `request.db`:
                                                                                                                                         - with `request._get_profiler_context_manager()`:
-                                                                                                                                            - ...
+                                                                                                                                            - ---
+                                                                                                                                            - Profiller area starts here.
+                                                                                                                                            - ---
+                                                                                                                                            - `request._get_profiler_context_manager()`:
+                                                                                                                                                - if self.session.profile_session and self.db:
+                                                                                                                                                    - return profiler.Profiler(
+                                                                                                                                                        db=self.db,
+                                                                                                                                                        description=self.httprequest.full_path,
+                                                                                                                                                        profile_session=self.session.profile_session,
+                                                                                                                                                        collectors=self.session.profile_collectors,
+                                                                                                                                                        params=self.session.profile_params,
+                                                                                                                                                    )._get_cm_proxy()
+                                                                                                                                                    - `Profiler.__init__(self, db=db, description=description, profile_session=profile_session, collectors=collectors, params=params)`:
+                                                                                                                                                        - self.start_time = 0
+                                                                                                                                                        - self.duration = 0
+                                                                                                                                                        - self.profile_session = profile_session or profiler.make_session()
+                                                                                                                                                        - self.description = description
+                                                                                                                                                        - self.init_frame = None
+                                                                                                                                                        - self.init_stack_trace = None
+                                                                                                                                                        - self.init_thread = None
+                                                                                                                                                        - self.disable_gc = disable_gc
+                                                                                                                                                        - self.filecache = {}
+                                                                                                                                                        - self.params = params or {}  # custom parameters usable by collectors
+                                                                                                                                                        - self.profile_id = None
+                                                                                                                                                        - self.log = log
+                                                                                                                                                        - self.sub_profilers = []
+                                                                                                                                                        - self.entry_count_limit = int(self.params.get("entry_count_limit", 0))   # the limit could be set using a smarter way
+                                                                                                                                                        - self.done = False
+                                                                                                                                                        - if db is ...:
+                                                                                                                                                            - db = getattr(threading.current_thread(), 'dbname', None)
+                                                                                                                                                            - if not db:
+                                                                                                                                                                - raise Exception('Database name cannot be defined automaticaly. \n Please provide a valid/falsy dbname or path parameter')
+                                                                                                                                                        - self.db = db
+                                                                                                                                                        - if collectors is None:
+                                                                                                                                                            - collectors = ['sql', 'traces_async']
+                                                                                                                                                        - self.collectors = []
+                                                                                                                                                        - for collector in collectors:
+                                                                                                                                                            - if isinstance(collector, str):
+                                                                                                                                                                - try:
+                                                                                                                                                                    - collector = Collector.make(collector)
+                                                                                                                                                                    - `Collector.make(collector)`:
+                                                                                                                                                                        - ////
+                                                                                                                                                                - Except Exception:
+                                                                                                                                                                    - continue
+                                                                                                                                                            - collector.profiler = self
+                                                                                                                                                            - self.collectors.append(collector)
+                                                                                                                                                - else:
+                                                                                                                                                    - return contextlib.nullcontext() # stand-in for a context manager that does nothing
+                                                                                                                                            - ---
+                                                                                                                                            - Profiller area ends here.
+                                                                                                                                            - ---
                                                                                                                                             - `response = request._serve_db()`:
-                                                                                                                                                - 
+                                                                                                                                                - `request._serve_db()`:
+                                                                                                                                                    - `self.registry, cr_readwrite = self._open_registry()`:
+                                                                                                                                                        - `self._open_registry()`:
+                                                                                                                                                            - `Registry(self.db)` @see registry.py
+                                                                                                                                                            - `registry.cursor(readonly=False)` @see registry.py
+                                                                                                                                                            - `registry.check_signaling(cr_readwrite)` @see registry.py
+                                                                                                                                                            - return registry, cr_readwrite
+                                                                                                                                                    - threading.current_thread().dbname = self.registry.db_name
+                                                                                                                                                    - self.env = inphms.api.Environment(cr_readwrite, self.session.uid, self.session.context)
+                                                                                                                                                        - `inphms.api.Environment(cr_readwrite, self.session.uid, self.session.context)`:
+                                                                                                                                                            - 
+                                                                                                                                                    - try:
+                                                                                                                                                        - rule, args = self.registry['ir.http']._match(self.httprequest.path)
+                                                                                                                                                    - except NotFound:
+                                                                                                                                                        - not_found = NotFound
+                                                                                                                                                    - finally:
+                                                                                                                                                        - if cr_readwrite is not None:
+                                                                                                                                                            - cr_readwrite.close()
+                                                                                                                                                    - if not_found:
+                                                                                                                                                        - return self._transactioning(
+                                                                                                                                                            functools.partial(self._serve_ir_http_fallback, not_found),
+                                                                                                                                                            readonly=True,
+                                                                                                                                                        )
+                                                                                                                                                        - `self._transactioning(functools.partial(self._serve_ir_http_fallback, not_found), readonly=True)`:
+                                                                                                                                                            - `self._serve_ir_http_fallback(not_found)`:
+                                                                                                                                                                - `self.params = self.get_http_params()`:
+                                                                                                                                                                    - `self.get_http_params()`:
+                                                                                                                                                                        - return {
+                                                                                                                                                                            **self.httprequest.args,
+                                                                                                                                                                            **self.httprequest.form,
+                                                                                                                                                                            **self.httprequest.files
+                                                                                                                                                                        }
+                                                                                                                                                                - response = `self.registry['ir.http']._serve_fallback()`:
+                                                                                                                                                                    - `self.registry['ir.http']._serve_fallback()`:
+                                                                                                                                                                        - 
+                                                                                                                                                                - if response:
+                                                                                                                                                                    - `self.registry['ir.http']._post_dispatch(response)`:
+                                                                                                                                                                        - 
+                                                                                                                                                                    return response
+                                                                                                                                                                - no_fallback = NotFound()
+                                                                                                                                                                - no_fallback.__context__ = not_found
+                                                                                                                                                                - no_fallback.error_response = `self.registry['ir.http']._handle_error(no_fallback)`
+                                                                                                                                                                    - `self.registry['ir.http']._handle_error(no_fallback)`:
+                                                                                                                                                                        - 
+                                                                                                                                                                - raise no_fallback
+                                                                                                                                                            - `self._transactioning(functools.partial(self._serve_ir_http_fallback, not_found), readonly=True)`:
+                                                                                                                                                                - for readonly_cr in (True, False) if readonly else (False,):
+                                                                                                                                                                    - threading.current_thread().cursor_mode = (
+                                                                                                                                                                        'ro' if readonly_cr
+                                                                                                                                                                        else 'ro->rw' if readonly
+                                                                                                                                                                        else 'rw'
+                                                                                                                                                                    )
+                                                                                                                                                                    - with contextlib.closing(self.registry.cursor(readonly=readonly_cr)) as cr:
+                                                                                                                                                                        - `self.registry.cursor(readonly=readonly_cr)` @see registry.py
+                                                                                                                                                                        - `self.env = self.env(cr=cr)`:
+                                                                                                                                                                            - inphms.api.Environment(cr=cr) @see api.py
+                                                                                                                                                                        - try:
+                                                                                                                                                                            - return `service_model.retrying(func, env=self.env)`:
+                                                                                                                                                                                - 
+                                                                                                                                                    - self._set_request_dispatcher(rule)
+                                                                                                                                                    - readonly = rule.endpoint.routing['readonly']
+                                                                                                                                                    - if callable(readonly):
                                                                                                                                         - Except RegistryError as e:
                                                                                                                                             - `request.session.logout()`:
-                                                                                                                                                -
                                                                                                                                             - if (self.httprequest.path.startswith('/inphms/') or self.httprequest.path in ('/inphms', '/web', '/web/login', '/test_http/ensure_db')):
                                                                                                                                                 - `request.reroute(self.httprequest.path, url_encode(self.httprequest.args.copy().pop('db', None)))`
                                                                                                                                             - `response = request._serve_nodb()`:
