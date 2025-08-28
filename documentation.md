@@ -127,7 +127,7 @@
         - closing everything and do cleanup.
 
 
-@ThreadedWSGIServerReloadable do :
+- @ThreadedWSGIServerReloadable do :
     - Inheriting & PATCHING : 
         - (a). LoggingBaseWSGIServerMixIn -> which to only logged output handler.
         - (b). raw werkzeug.serving.ThreadedWSGIServer
@@ -164,7 +164,7 @@
             - completely overriding the werkzeug to handle loging error ourselves.
 
 
-@RequestHandler() do :
+- @RequestHandler() do :
     - __init__():
         - which would call parents (werkzeug) __init__:
             - which would do:
@@ -230,6 +230,14 @@
                         - @Session.__init__()
                             - just populate the data, key, and is_new.
                             - will also convert and make the `data` into `__data` rather than attributes or items.
+                - would refresh setdefault(). from the get_default_session() key params.
+                - would set language.
+                - if session.db exists, and db_filter([session.db], host)
+                    - would use dbname = session.db
+                - else:
+                    - would list all dbs(force=True, host=host)
+                        - @db_list would:
+                            - `dbs = inphms.service.db.list_dbs(force)`
 
 # CONFIG
 

@@ -718,6 +718,19 @@ class Request:
             functools.partial(self._serve_ir_http, rule, args),
             readonly=readonly,
         )
+    
+    def _serve_nodb(self):
+        """
+        Dispatch the request to its matching controller in a
+        database-free environment.
+        """
+        router = root.nodb_routing_map.bind_to_environ(self.httprequest.environ)
+        rule, args = router.match(return_rule=True)
+        self._set_request_dispatcher(rule)
+        self.dispatcher.pre_dispatch(rule, args)
+        response = self.dispatcher.dispatch(rule.endpoint, args)
+        self.dispatcher.post_dispatch(response)
+        return response
 
 class _Response(werkzeug.wrappers.Response):
     """
@@ -1141,6 +1154,113 @@ def route(route=None, **routing):
         return route_wrapper
     return decorator
 
+def _generate_routing_rules(modules, nodb_only, converters=None):
+    """
+    Two-fold algorithm used to (1) determine which method in the
+    controller inheritance tree should bind to what URL with respect to
+    the list of installed modules and (2) merge the various @route
+    arguments of said method with the @route arguments of the method it
+    overrides.
+    """
+    def is_valid(cls):
+        """ Determine if the class is defined in an addon. """
+        path = cls.__module__.split('.')
+        return path[:2] == ['odoo', 'addons'] and path[2] in modules
+
+    def get_leaf_classes(cls):
+        """
+        Find the classes that have no child and that have ``cls`` as
+        ancestor.
+        """
+        result = []
+        for subcls in cls.__subclasses__():
+            if is_valid(subcls):
+                result.extend(get_leaf_classes(subcls))
+        if not result and is_valid(cls):
+            result.append(cls)
+        return result
+
+    def build_controllers():
+        """
+        Create dummy controllers that inherit only from the controllers
+        defined at the given ``modules`` (often system wide modules or
+        installed modules). Modules in this context are Odoo addons.
+        """
+        # Controllers defined outside of odoo addons are outside of the
+        # controller inheritance/extension mechanism.
+        yield from (ctrl() for ctrl in Controller.children_classes.get('', []))
+
+        # Controllers defined inside of odoo addons can be extended in
+        # other installed addons. Rebuild the class inheritance here.
+        highest_controllers = []
+        for module in modules:
+            highest_controllers.extend(Controller.children_classes.get(module, []))
+
+        for top_ctrl in highest_controllers:
+            leaf_controllers = list(unique(get_leaf_classes(top_ctrl)))
+
+            name = top_ctrl.__name__
+            if leaf_controllers != [top_ctrl]:
+                name += ' (extended by %s)' %  ', '.join(
+                    bot_ctrl.__name__
+                    for bot_ctrl in leaf_controllers
+                    if bot_ctrl is not top_ctrl
+                )
+
+            Ctrl = type(name, tuple(reversed(leaf_controllers)), {})
+            yield Ctrl()
+
+    for ctrl in build_controllers():
+        for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
+
+            # Skip this method if it is not @route decorated anywhere in
+            # the hierarchy
+            def is_method_a_route(cls):
+                return getattr(getattr(cls, method_name, None), 'original_routing', None) is not None
+            if not any(map(is_method_a_route, type(ctrl).mro())):
+                continue
+
+            merged_routing = {
+                # 'type': 'http',  # set below
+                'auth': 'user',
+                'methods': None,
+                'routes': [],
+            }
+
+            for cls in unique(reversed(type(ctrl).mro()[:-2])):  # ancestors first
+                if method_name not in cls.__dict__:
+                    continue
+                submethod = getattr(cls, method_name)
+
+                if not hasattr(submethod, 'original_routing'):
+                    _logger.warning("The endpoint %s is not decorated by @route(), decorating it myself.", f'{cls.__module__}.{cls.__name__}.{method_name}')
+                    submethod = route()(submethod)
+
+                _check_and_complete_route_definition(cls, submethod, merged_routing)
+
+                merged_routing.update(submethod.original_routing)
+
+            if not merged_routing['routes']:
+                _logger.warning("%s is a controller endpoint without any route, skipping.", f'{cls.__module__}.{cls.__name__}.{method_name}')
+                continue
+
+            if nodb_only and merged_routing['auth'] != "none":
+                continue
+
+            for url in merged_routing['routes']:
+                # duplicates the function (partial) with a copy of the
+                # original __dict__ (update_wrapper) to keep a reference
+                # to `original_routing` and `original_endpoint`, assign
+                # the merged routing ONLY on the duplicated function to
+                # ensure method's immutability.
+                endpoint = functools.partial(method)
+                functools.update_wrapper(endpoint, method)
+                endpoint.routing = merged_routing
+
+                yield (url, endpoint)
+
+
+
 # =========================================================
 # WSGI Entry Point
 # =========================================================
@@ -1241,6 +1361,49 @@ class Application:
         path = inphms.tools.config.session_dir
         _logger.debug('HTTP sessions stored in: %s', path)
         return FilesystemSessionStore(path, session_class=Session, renew_missing=True)
+
+    def get_static_file(self, url, host=''):
+        """
+        Get the full-path of the file if the url resolves to a local
+        static file, otherwise return None.
+
+        Without the second host parameters, ``url`` must be an absolute
+        path, others URLs are considered faulty.
+
+        With the second host parameters, ``url`` can also be a full URI
+        and the authority found in the URL (if any) is validated against
+        the given ``host``.
+        """
+
+        netloc, path = urlparse(url)[1:3]
+        try:
+            path_netloc, module, static, resource = path.split('/', 3)
+        except ValueError:
+            return None
+
+        if ((netloc and netloc != host) or (path_netloc and path_netloc != host)):
+            return None
+
+        if (module not in self.statics or static != 'static' or not resource):
+            return None
+
+        try:
+            return file_path(f'{module}/static/{resource}')
+        except FileNotFoundError:
+            return None
+
+    @lazy_property
+    def nodb_routing_map(self):
+        nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
+        for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
+            routing = submap(endpoint.routing, ROUTING_KEYS)
+            if routing['methods'] is not None and 'OPTIONS' not in routing['methods']:
+                routing['methods'] = [*routing['methods'], 'OPTIONS']
+            rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
+            rule.merge_slashes = False
+            nodb_routing_map.add(rule)
+
+        return nodb_routing_map
     
 
 root = Application()

@@ -223,7 +223,7 @@ def memory_info(process): #ichecked
 
 class CommonServer(object): #ichecked
     _on_stop_funcs = []
-    def __init__(self, app):
+    def __init__(self, app): #ichecked
         self.app = app ## inphms.http.root
         # config
         self.interface = config['http_interface'] or '0.0.0.0'
@@ -267,7 +267,7 @@ class CommonServer(object): #ichecked
 
 class ThreadedServer(CommonServer):
     def __init__(self, app): #ichecked
-        super(ThreadedServer, self).__init__(app)
+        super().__init__(app)
         self.main_thread_id = threading.current_thread().ident
         # Variable keeping track of the number of calls to the signal handler defined
         # below. This variable is monitored by ``quit_on_signals()``.
