@@ -186,7 +186,7 @@ python inphms-bin --<config-params>
                                                                                                                                             if (not key.startswith(('werkzeug.', 'wsgi.', 'socket')) or key in ['wsgi.url_scheme', 'werkzeug.proxy_fix.orig'])
                                                                                                                                         }
                                                                                                                                       ```
-                                                                                                                                - ```python
+                                                                                                                                - ```markdown
                                                                                                                                     HTTPRequest.attributes = [
                                                                                                                                         ...HTTPREQUEST_ATTRIBUTES, each wrapped into property,
                                                                                                                                         get, set,
