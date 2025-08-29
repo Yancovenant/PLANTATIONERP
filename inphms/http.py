@@ -1358,7 +1358,7 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
     def is_valid(cls):
         """ Determine if the class is defined in an addon. """
         path = cls.__module__.split('.')
-        return path[:2] == ['odoo', 'addons'] and path[2] in modules
+        return path[:2] == ['inphms', 'addons'] and path[2] in modules
 
     def get_leaf_classes(cls):
         """
@@ -1379,11 +1379,11 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
         defined at the given ``modules`` (often system wide modules or
         installed modules). Modules in this context are Odoo addons.
         """
-        # Controllers defined outside of odoo addons are outside of the
+        # Controllers defined outside of inphms addons are outside of the
         # controller inheritance/extension mechanism.
         yield from (ctrl() for ctrl in Controller.children_classes.get('', []))
-
-        # Controllers defined inside of odoo addons can be extended in
+        
+        # Controllers defined inside of inphms addons can be extended in
         # other installed addons. Rebuild the class inheritance here.
         highest_controllers = []
         for module in modules:
@@ -1404,7 +1404,6 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
             yield Ctrl()
     
     for ctrl in build_controllers():
-        print(f"ctrl: {ctrl}")
         for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
             print(f"method_name: {method_name}, method: {method}")
             # Skip this method if it is not @route decorated anywhere in
