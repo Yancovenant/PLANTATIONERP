@@ -405,6 +405,9 @@ python inphms-bin --<config-params>
                                                                                                                                                         - for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
                                                                                                                                                             - `_generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True)`:
                                                                                                                                                                 - `inphms.conf.server_wide_modules`: base, web
+                                                                                                                                                                - for ctrl in `build_controllers()`:
+                                                                                                                                                                    - `build_controllers()`:
+                                                                                                                                                                        - 
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:
                                                                                                                                     - return `response(environ, start_response)`
