@@ -399,6 +399,12 @@ python inphms-bin --<config-params>
                                                                                                                                             - if (self.httprequest.path.startswith('/inphms/') or self.httprequest.path in ('/inphms', '/web', '/web/login', '/test_http/ensure_db')):
                                                                                                                                                 - `request.reroute(self.httprequest.path, url_encode(self.httprequest.args.copy().pop('db', None)))`
                                                                                                                                             - `response = request._serve_nodb()`:
+                                                                                                                                                - router = `root.nodb_routing_map.bind_to_environ(self.httprequest.environ)`:
+                                                                                                                                                    - `root.nodb_routing_map()`:
+                                                                                                                                                        - nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
+                                                                                                                                                        - for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
+                                                                                                                                                            - `_generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True)`:
+                                                                                                                                                                - `inphms.conf.server_wide_modules`: base, web
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:
                                                                                                                                     - return `response(environ, start_response)`
