@@ -1347,7 +1347,39 @@ def route(route=None, **routing):
         return route_wrapper
     return decorator
 
-def _generate_routing_rules(modules, nodb_only, converters=None):
+def _check_and_complete_route_definition(controller_cls, submethod, merged_routing): #ichecked
+    """Verify and complete the route definition.
+
+    * Ensure 'type' is defined on each method's own routing.
+    * Ensure overrides don't change the routing type or the read/write mode
+
+    :param submethod: route method
+    :param dict merged_routing: accumulated routing values
+    """
+    default_type = submethod.original_routing.get('type', 'http')
+    routing_type = merged_routing.setdefault('type', default_type)
+    if submethod.original_routing.get('type') not in (None, routing_type):
+        _logger.warning(
+            "The endpoint %s changes the route type, using the original type: %r.",
+            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
+            routing_type)
+    submethod.original_routing['type'] = routing_type
+
+    default_auth = submethod.original_routing.get('auth', merged_routing['auth'])
+    default_mode = submethod.original_routing.get('readonly', default_auth == 'none')
+    parent_readonly = merged_routing.setdefault('readonly', default_mode)
+    child_readonly = submethod.original_routing.get('readonly')
+    if child_readonly not in (None, parent_readonly) and not callable(child_readonly):
+        _logger.warning(
+            "The endpoint %s made the route %s altough its parent was defined as %s. Setting the route read/write.",
+            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
+            'readonly' if child_readonly else 'read/write',
+            'readonly' if parent_readonly else 'read/write',
+        )
+        submethod.original_routing['readonly'] = False
+
+# DONE
+def _generate_routing_rules(modules, nodb_only, converters=None): #ichecked
     """
     Two-fold algorithm used to (1) determine which method in the
     controller inheritance tree should bind to what URL with respect to
@@ -1355,12 +1387,12 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
     arguments of said method with the @route arguments of the method it
     overrides.
     """
-    def is_valid(cls):
+    def is_valid(cls): #ichecked
         """ Determine if the class is defined in an addon. """
         path = cls.__module__.split('.')
         return path[:2] == ['inphms', 'addons'] and path[2] in modules
 
-    def get_leaf_classes(cls):
+    def get_leaf_classes(cls): #ichecked
         """
         Find the classes that have no child and that have ``cls`` as
         ancestor.
@@ -1373,11 +1405,11 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
             result.append(cls)
         return result
 
-    def build_controllers():
+    def build_controllers(): #ichecked
         """
         Create dummy controllers that inherit only from the controllers
         defined at the given ``modules`` (often system wide modules or
-        installed modules). Modules in this context are Odoo addons.
+        installed modules). Modules in this context are Inphms addons.
         """
         # Controllers defined outside of inphms addons are outside of the
         # controller inheritance/extension mechanism.
@@ -1403,9 +1435,8 @@ def _generate_routing_rules(modules, nodb_only, converters=None):
             Ctrl = type(name, tuple(reversed(leaf_controllers)), {})
             yield Ctrl()
     
-    for ctrl in build_controllers():
+    for ctrl in build_controllers(): #ichecked
         for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
-            print(f"method_name: {method_name}, method: {method}")
             # Skip this method if it is not @route decorated anywhere in
             # the hierarchy
             def is_method_a_route(cls):
@@ -1586,17 +1617,14 @@ class Application:
             return None
 
     @lazy_property
-    def nodb_routing_map(self):
+    def nodb_routing_map(self): #ichecked
         nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
         for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
-            print(f"url: {url}, endpoint: {endpoint}")
             routing = submap(endpoint.routing, ROUTING_KEYS)
-            print(f"routing: {routing}")
             if routing['methods'] is not None and 'OPTIONS' not in routing['methods']:
                 routing['methods'] = [*routing['methods'], 'OPTIONS']
             rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
             rule.merge_slashes = False
-            print(f"rule: {rule}")
             nodb_routing_map.add(rule)
 
         return nodb_routing_map

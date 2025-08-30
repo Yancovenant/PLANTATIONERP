@@ -296,7 +296,7 @@ class Callbacks:
         self._funcs.clear()
         self.data.clear()
 
-def unique(it: Iterable[T]) -> Iterator[T]:
+def unique(it: Iterable[T]) -> Iterator[T]: #ichecked
     """ "Uniquifier" for the provided iterable: will output each element of
     the iterable once.
 
@@ -311,7 +311,7 @@ def unique(it: Iterable[T]) -> Iterator[T]:
             seen.add(e)
             yield e
 
-def submap(mapping: Mapping[K, T], keys: Iterable[K]) -> Mapping[K, T]:
+def submap(mapping: Mapping[K, T], keys: Iterable[K]) -> Mapping[K, T]: #ichecked
     """
     Get a filtered copy of the mapping where only some keys are present.
 
