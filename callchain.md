@@ -487,7 +487,13 @@ python inphms-bin --<config-params>
                                                                                                                                                     - set header for CORS and OPTIONS method.
                                                                                                                                                     - set header for max content length.
                                                                                                                                                 - response = self.`dispatcher.dispatch(rule.endpoint, args)`:
-                                                                                                                                                    - 
+                                                                                                                                                    - self.request.params = dict(self.request.get_http_params(), **args) // merged.
+                                                                                                                                                    - if method NOT IN CSRF_FREE_METHODS and endpoint.routing.get('csrf', True):
+                                                                                                                                                        - if not self.request.db:
+                                                                                                                                                            - return self.request.redirect('/web/database/selector')
+                                                                                                                                                        - token = self.request.params.pop('csrf_token', None)
+                                                                                                                                                        - if not self.request.`validate_csrf(token)`:
+                                                                                                                                                            - 
                                                                                                                                                     
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:

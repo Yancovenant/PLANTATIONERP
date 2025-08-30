@@ -792,6 +792,34 @@ class Request:
         threading.current_thread().url = httprequest.url
         self.httprequest = httprequest
 
+    def validate_csrf(self, csrf):
+        """
+        Is the given csrf token valid ?
+
+        :param str csrf: The token to validate.
+        :returns: ``True`` when valid, ``False`` when not.
+        :rtype: bool
+        """
+        if not csrf:
+            return False
+
+        secret = self.env['ir.config_parameter'].sudo().get_param('database.secret')
+        if not secret:
+            raise ValueError("CSRF protection requires a configured database secret")
+
+        hm, _, max_ts = csrf.rpartition('o')
+        msg = f'{self.session.sid}{max_ts}'.encode('utf-8')
+
+        if max_ts:
+            try:
+                if int(max_ts) < int(time.time()):
+                    return False
+            except ValueError:
+                return False
+
+        hm_expected = hmac.new(secret.encode('ascii'), msg, hashlib.sha1).hexdigest()
+        return consteq(hm, hm_expected)
+
     # =====================================================
     # Routing
     # =====================================================
