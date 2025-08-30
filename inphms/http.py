@@ -281,7 +281,7 @@ def db_filter(dbs, host=None): #ichecked
 
     return list(dbs)
 
-def is_cors_preflight(request, endpoint):
+def is_cors_preflight(request, endpoint): #ichecked
     return request.httprequest.method == 'OPTIONS' and endpoint.routing.get('cors', False)
 
 # =========================================================
@@ -586,6 +586,32 @@ HTTPREQUEST_ATTRIBUTES = [
 for attr in HTTPREQUEST_ATTRIBUTES:
     setattr(HTTPRequest, attr, property(*make_request_wrap_methods(attr)))
 
+class FutureResponse:
+    """
+    werkzeug.Response mock class that only serves as placeholder for
+    headers to be injected in the final response.
+    """
+    # used by werkzeug.Response.set_cookie
+    charset = 'utf-8'
+    max_cookie_size = 4093
+
+    def __init__(self):
+        self.headers = werkzeug.datastructures.Headers()
+    
+    @functools.wraps(werkzeug.Response.set_cookie)
+    def set_cookie(self, key, value='', max_age=None, expires=-1, path='/', domain=None, secure=False, httponly=False, samesite=None, cookie_type='required'):
+        if expires == -1:  # not forced value -> default value -> 1 year
+            expires = datetime.now() + timedelta(days=365)
+
+        if request.db and not request.env['ir.http']._is_allowed_cookie(cookie_type):
+            max_age = 0
+        werkzeug.Response.set_cookie(self, key, value=value, max_age=max_age, expires=expires, path=path, domain=domain, secure=secure, httponly=httponly, samesite=samesite)
+    
+    @property
+    def _charset(self):
+        return self.charset
+
+
 class Request:
     """
     Wrapper around the incoming HTTP request with deserialized request
@@ -593,7 +619,7 @@ class Request:
     """
     def __init__(self, httprequest): #ichecked
         self.httprequest = httprequest
-        # self.future_response = FutureResponse()
+        self.future_response = FutureResponse()
         self.dispatcher = _dispatchers['http'](self)  # until we match
         self.params = {}  # set by the Dispatcher
 
@@ -727,19 +753,17 @@ class Request:
         }
         return params
 
-    def _set_request_dispatcher(self, rule):
+    def _set_request_dispatcher(self, rule): #ichecked
         routing = rule.endpoint.routing
-        print(f"routing: {routing}")
         dispatcher_cls = _dispatchers[routing['type']]
-        print(f"dispatcher_cls: {dispatcher_cls}")
-        if (not is_cors_preflight(self, rule.endpoint)
-            and not dispatcher_cls.is_compatible_with(self)):
-            compatible_dispatchers = [
-                disp.routing_type
-                for disp in _dispatchers.values()
-                if disp.is_compatible_with(self)
-            ]
-            raise BadRequest(f"Request inferred type is compatible with {compatible_dispatchers} but {routing['routes'][0]!r} is type={routing['type']!r}.")
+        if (not is_cors_preflight(self, rule.endpoint) and
+            not dispatcher_cls.is_compatible_with(self)):
+                compatible_dispatchers = [
+                    disp.routing_type
+                    for disp in _dispatchers.values()
+                    if disp.is_compatible_with(self)
+                ]
+                raise BadRequest(f"Request inferred type is compatible with {compatible_dispatchers} but {routing['routes'][0]!r} is type={routing['type']!r}.")
         self.dispatcher = dispatcher_cls(self)
     
     def reroute(self, path, query_string=None):
@@ -910,14 +934,10 @@ class Request:
         database-free environment.
         """
         router = root.nodb_routing_map.bind_to_environ(self.httprequest.environ)
-        print(f"router: {router}")
         rule, args = router.match(return_rule=True)
-        print(f"rule: {rule}, args: {args}")
         self._set_request_dispatcher(rule)
-        print(f"self.dispatcher: {self.dispatcher}")
         self.dispatcher.pre_dispatch(rule, args)
         response = self.dispatcher.dispatch(rule.endpoint, args)
-        print(f"response: {response}")
         self.dispatcher.post_dispatch(response)
         return response
 
@@ -1076,6 +1096,15 @@ class Response(Proxy):
         if 'set_cookie' in response.__dict__:
             self.__dict__['set_cookie'] = response.__dict__['set_cookie']
 
+werkzeug_abort = werkzeug.exceptions.abort
+
+def abort(status, *args, **kwargs): #ichecked
+    if isinstance(status, Response):
+        status = status._wrapped__
+    werkzeug_abort(status, *args, **kwargs)
+
+werkzeug.exceptions.abort = abort
+
 # =========================================================
 # Core type-specialized dispatchers
 # =========================================================
@@ -1086,22 +1115,22 @@ class Dispatcher(ABC): # ABC - Abstract Base Class
     routing_type: str
 
     @classmethod
-    def __init_subclass__(cls):
+    def __init_subclass__(cls): #ichecked
         super().__init_subclass__()
         _dispatchers[cls.routing_type] = cls
 
-    def __init__(self, request):
+    def __init__(self, request): #ichecked
         self.request = request
 
     @classmethod
     @abstractmethod
-    def is_compatible_with(cls, request):
+    def is_compatible_with(cls, request): #ichecked
         """
         Determine if the current request is compatible with this
         dispatcher.
         """
 
-    def pre_dispatch(self, rule, args):
+    def pre_dispatch(self, rule, args): #ichecked
         """
         Prepare the system before dispatching the request to its
         controller. This method is often overridden in ir.http to
@@ -1162,7 +1191,7 @@ class HttpDispatcher(Dispatcher):
     routing_type = 'http'
 
     @classmethod
-    def is_compatible_with(cls, request):
+    def is_compatible_with(cls, request): #ichecked
         return True
 
     def dispatch(self, endpoint, args):

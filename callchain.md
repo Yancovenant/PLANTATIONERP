@@ -457,6 +457,38 @@ python inphms-bin --<config-params>
                                                                                                                                                                 - `submap(routing, ROUTING_KEYS)`:
                                                                                                                                                                     - return filtered dict from the original keys {K:v}.
                                                                                                                                                                 - ROUTING_KEYS == werkzeug understandable keys.
+                                                                                                                                                            - rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
+                                                                                                                                                            - add `OPTIONS` if not in `methods`
+                                                                                                                                                            - rule.merge_slashes = False
+                                                                                                                                                            - nodb_routing_map.add(rule)
+                                                                                                                                                        - return nodb_routing_map
+                                                                                                                                                    - `.bind_to_environ(self.httprequest.environ)` @see werkzeug.routing.map.py
+                                                                                                                                                        - NOT DONE
+                                                                                                                                                - rule, args = router.match(return_rule=True)
+                                                                                                                                                - self._set_request_dispatcher(rule)
+                                                                                                                                                    - `_set_request_dispatcher(rule)`:
+                                                                                                                                                        - routing = rule.endpoint.routing
+                                                                                                                                                        - dispatcher_cls = _dispatchers[routing['type']]
+                                                                                                                                                        - if 1. not `is_cors_preflight(self, rule.endpoint)`:
+                                                                                                                                                            - return if method == 'OPTIONS' and endpoint.routing.get('cors', False)
+                                                                                                                                                        - if 2. not `dispatcher_cls.is_compatible_with(self)`:
+                                                                                                                                                            - ---
+                                                                                                                                                            - HTTP dispatcher Example
+                                                                                                                                                            - ---
+                                                                                                                                                            - return True.
+                                                                                                                                                        - if all this: 
+                                                                                                                                                            - raise BadRequest(f"Request inferred type is compatible with {compatible_dispatchers} but {routing['routes'][0]!r} is type={routing['type']!r}.")
+                                                                                                                                                        - self.dispatcher = dispatcher_cls(self)
+                                                                                                                                                - self.`dispatcher.pre_dispatch(rule, args):`
+                                                                                                                                                    - routing = rule.endpoint.routing
+                                                                                                                                                    - self.request.session.can_save = routing.get('save_session', True)
+                                                                                                                                                    - set_header = self.request.`future_response.headers.set` @see werkzeug.datastructures.Headers.set method.
+                                                                                                                                                    - set header for CORS.
+                                                                                                                                                    - set header for CORS and OPTIONS method.
+                                                                                                                                                    - set header for max content length.
+                                                                                                                                                - response = self.`dispatcher.dispatch(rule.endpoint, args)`:
+                                                                                                                                                    - 
+                                                                                                                                                    
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:
                                                                                                                                     - return `response(environ, start_response)`
