@@ -1,6 +1,8 @@
 # Part of Inphms, see License file for full copyright and licensing details.
 
+from . import utils
 from . import home
+from . import database
 
 def __getattr__(attr):
     if attr != 'main':

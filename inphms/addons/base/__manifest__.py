@@ -8,7 +8,10 @@
         Base module for Inphms ERP system, needed for all installation.
         Provides core functionality that other modules depend on.
     """,
-    'data': [],
+    'data': [
+        'data/res_country_data.xml',
+        'data/res.lang.csv',
+    ],
     'demo': [],
     'assets': [],
     'installable': True,

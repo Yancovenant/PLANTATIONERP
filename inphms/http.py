@@ -284,6 +284,18 @@ def db_filter(dbs, host=None): #ichecked
 def is_cors_preflight(request, endpoint): #ichecked
     return request.httprequest.method == 'OPTIONS' and endpoint.routing.get('cors', False)
 
+def get_session_max_inactivity(env):
+    if not env or env.cr._closed:
+        return SESSION_LIFETIME
+
+    ICP = env['ir.config_parameter'].sudo()
+
+    try:
+        return int(ICP.get_param('sessions.max_inactivity_seconds', SESSION_LIFETIME))
+    except ValueError:
+        _logger.warning("Invalid value for 'sessions.max_inactivity_seconds', using default value.")
+        return SESSION_LIFETIME
+
 # =========================================================
 # Session
 # =========================================================
@@ -344,7 +356,7 @@ class FilesystemSessionStore(sessions.FilesystemSessionStore):
                 os.rename(old_path, session_path)
         return super().get(sid)
 
-    def get_session_filename(self, sid):
+    def get_session_filename(self, sid): #ichecked
         # scatter sessions across 4096 (64^2) directories
         if not self.is_valid_key(sid):
             raise ValueError(f'Invalid session id {sid!r}')
@@ -352,6 +364,22 @@ class FilesystemSessionStore(sessions.FilesystemSessionStore):
         dirname = os.path.join(self.path, sha_dir)
         session_path = os.path.join(dirname, sid)
         return session_path
+
+    def save(self, session): #ichecked
+        session_path = self.get_session_filename(session.sid)
+        dirname = os.path.dirname(session_path)
+        if not os.path.isdir(dirname):
+            with contextlib.suppress(OSError):
+                os.mkdir(dirname, 0o0755)
+        super().save(session)
+
+    def rotate(self, session, env): #ichecked
+        self.delete(session)
+        session.sid = self.generate_key()
+        if session.uid and env:
+            session.session_token = security.compute_session_token(session, env)
+        session.should_rotate = False
+        self.save(session)
 
 class Session(collections.abc.MutableMapping):
     """ Structure containing data persisted across requests. """
@@ -470,7 +498,7 @@ class Session(collections.abc.MutableMapping):
             'session_token': env.user._compute_session_token(self.sid),
         })
 
-    def logout(self, keep_db=False):
+    def logout(self, keep_db=False): #ichecked
         db = self.db if keep_db else get_default_session()['db']  # None
         debug = self.debug
         self.clear()
@@ -481,7 +509,7 @@ class Session(collections.abc.MutableMapping):
         if request and request.env:
             request.env['ir.http']._post_logout()
 
-    def touch(self):
+    def touch(self): #ichecked
         self.is_dirty = True
 
     def update_trace(self, request):
@@ -586,7 +614,7 @@ HTTPREQUEST_ATTRIBUTES = [
 for attr in HTTPREQUEST_ATTRIBUTES:
     setattr(HTTPRequest, attr, property(*make_request_wrap_methods(attr)))
 
-class FutureResponse:
+class FutureResponse: #ichecked
     """
     werkzeug.Response mock class that only serves as placeholder for
     headers to be injected in the final response.
@@ -691,6 +719,25 @@ class Request:
             return lang
         except (ValueError, KeyError):
             return None
+
+    @lazy_property
+    def cookies(self): #ichecked
+        cookies = werkzeug.datastructures.MultiDict(self.httprequest.cookies)
+        if self.registry:
+            self.registry['ir.http']._sanitize_cookies(cookies)
+        return werkzeug.datastructures.ImmutableMultiDict(cookies)
+
+    def update_env(self, user=None, context=None, su=None): #ichecked
+        """ Update the environment of the current request.
+
+        :param user: optional user/user id to change the current user
+        :type user: int or :class:`res.users record<~inphms.addons.base.models.res_users.Users>`
+        :param dict context: optional context dictionary to change the current context
+        :param bool su: optional boolean to change the superuser mode
+        """
+        cr = None  # None is a sentinel, it keeps the same cursor
+        self.env = self.env(cr, user, context, su)
+        threading.current_thread().uid = self.env.uid
 
     # =====================================================
     # Helpers
@@ -819,6 +866,41 @@ class Request:
 
         hm_expected = hmac.new(secret.encode('ascii'), msg, hashlib.sha1).hexdigest()
         return consteq(hm, hm_expected)
+
+    def _inject_future_response(self, response):
+        response.headers.extend(self.future_response.headers)
+        return response
+    
+    def _save_session(self): #ichecked
+        """ Save a modified session on disk. """
+        sess = self.session
+
+        if not sess.can_save:
+            return
+
+        if sess.should_rotate:
+            root.session_store.rotate(sess, self.env)  # it saves
+        elif sess.is_dirty:
+            root.session_store.save(sess)
+
+        cookie_sid = self.cookies.get('session_id')
+        if sess.is_dirty or cookie_sid != sess.sid:
+            self.future_response.set_cookie('session_id', sess.sid, max_age=get_session_max_inactivity(self.env), httponly=True)
+
+    def redirect(self, location, code=303, local=True): #ichecked
+        # compatibility, Werkzeug support URL as location
+        if isinstance(location, URL):
+            location = location.to_url()
+        if local:
+            location = '/' + url_parse(location).replace(scheme='', netloc='').to_url().lstrip('/\\')
+        if self.db:
+            return self.env['ir.http']._redirect(location, code)
+        return werkzeug.utils.redirect(location, code, Response=Response)
+
+    def redirect_query(self, location, query=None, code=303, local=True): #ichecked
+        if query:
+            location += '?' + url_encode(query)
+        return self.redirect(location, code=code, local=local)
 
     # =====================================================
     # Routing
@@ -956,7 +1038,7 @@ class Request:
             readonly=readonly,
         )
     
-    def _serve_nodb(self):
+    def _serve_nodb(self): #ichecked
         """
         Dispatch the request to its matching controller in a
         database-free environment.
@@ -1050,6 +1132,36 @@ class _Response(werkzeug.wrappers.Response):
             self.template = None
 
 # DONE
+class Headers(Proxy):
+    _wrapped__ = werkzeug.datastructures.Headers
+
+    __getitem__ = ProxyFunc()
+    __repr__ = ProxyFunc(str)
+    __setitem__ = ProxyFunc(None)
+    __str__ = ProxyFunc(str)
+    __contains__ = ProxyFunc(bool)
+    add = ProxyFunc(None)
+    add_header = ProxyFunc(None)
+    clear = ProxyFunc(None)
+    copy = ProxyFunc(lambda v: Headers(v))  # noqa: PLW0108
+    extend = ProxyFunc(None)
+    get = ProxyFunc()
+    get_all = ProxyFunc()
+    getlist = ProxyFunc()
+    items = ProxyFunc()
+    keys = ProxyFunc()
+    pop = ProxyFunc()
+    popitem = ProxyFunc()
+    remove = ProxyFunc(None)
+    set = ProxyFunc(None)
+    setdefault = ProxyFunc()
+    setlist = ProxyFunc(None)
+    setlistdefault = ProxyFunc()
+    to_wsgi_list = ProxyFunc()
+    update = ProxyFunc(None)
+    values = ProxyFunc()
+
+# DONE
 class Response(Proxy):
     _wrapped__ = _Response
 
@@ -1077,7 +1189,7 @@ class Response(Proxy):
     get_data = ProxyFunc()
     get_etag = ProxyFunc()
     get_json = ProxyFunc()
-    # headers = ProxyAttr(Headers)
+    headers = ProxyAttr(Headers)
     is_json = ProxyAttr(bool)
     is_sequence = ProxyAttr(bool)
     is_streamed = ProxyAttr(bool)
@@ -1190,7 +1302,7 @@ class Dispatcher(ABC): # ABC - Abstract Base Class
             self.request.httprequest.max_content_length = max_content_length
 
     @abstractmethod
-    def dispatch(self, endpoint, args):
+    def dispatch(self, endpoint, args): #ichecked
         """
         Extract the params from the request's body and call the
         endpoint. While it is preferred to override ir.http._pre_dispatch
@@ -1198,7 +1310,7 @@ class Dispatcher(ABC): # ABC - Abstract Base Class
         a tight control over the dispatching.
         """
 
-    def post_dispatch(self, response):
+    def post_dispatch(self, response): #ichecked
         """
         Manipulate the HTTP response to inject various headers, also
         save the session when it is dirty.
@@ -1251,7 +1363,7 @@ class HttpDispatcher(Dispatcher):
         else:
             return endpoint(**self.request.params)
 
-    def handle_error(self, exc: Exception) -> collections.abc.Callable:
+    def handle_error(self, exc: Exception) -> collections.abc.Callable: #ichecked
         """
         Handle any exception that occurred while dispatching a request
         to a `type='http'` route. Also handle exceptions that occurred
@@ -1548,7 +1660,55 @@ def _generate_routing_rules(modules, nodb_only, converters=None): #ichecked
 class Application:
     """ INPHMS WSGI Application """
     # See also: https://www.python.org/dev/peps/pep-3333
-    def __call__(self, environ, start_response):
+
+    @lazy_property
+    def statics(self): #ichecked
+        """
+        Map module names to their absolute ``static`` path on the file
+        system.
+        """
+        mod2path = {}
+        for addons_path in inphms.addons.__path__:
+            for module in os.listdir(addons_path):
+                manifest = get_manifest(module)
+                static_path = opj(addons_path, module, 'static')
+                if (manifest
+                        and (manifest['installable'] or manifest['assets'])
+                        and os.path.isdir(static_path)):
+                    mod2path[module] = static_path
+        return mod2path
+
+    def get_static_file(self, url, host=''): #ichecked
+        """
+        Get the full-path of the file if the url resolves to a local
+        static file, otherwise return None.
+
+        Without the second host parameters, ``url`` must be an absolute
+        path, others URLs are considered faulty.
+
+        With the second host parameters, ``url`` can also be a full URI
+        and the authority found in the URL (if any) is validated against
+        the given ``host``.
+        """
+
+        netloc, path = urlparse(url)[1:3]
+        try:
+            path_netloc, module, static, resource = path.split('/', 3)
+        except ValueError:
+            return None
+
+        if ((netloc and netloc != host) or (path_netloc and path_netloc != host)):
+            return None
+
+        if (module not in self.statics or static != 'static' or not resource):
+            return None
+
+        try:
+            return file_path(f'{module}/static/{resource}')
+        except FileNotFoundError:
+            return None
+
+    def __call__(self, environ, start_response): #ichecked
         """
         WSGI application entry point.
 
@@ -1643,36 +1803,6 @@ class Application:
         _logger.debug('HTTP sessions stored in: %s', path)
         return FilesystemSessionStore(path, session_class=Session, renew_missing=True)
 
-    def get_static_file(self, url, host=''): #ichecked
-        """
-        Get the full-path of the file if the url resolves to a local
-        static file, otherwise return None.
-
-        Without the second host parameters, ``url`` must be an absolute
-        path, others URLs are considered faulty.
-
-        With the second host parameters, ``url`` can also be a full URI
-        and the authority found in the URL (if any) is validated against
-        the given ``host``.
-        """
-
-        netloc, path = urlparse(url)[1:3]
-        try:
-            path_netloc, module, static, resource = path.split('/', 3)
-        except ValueError:
-            return None
-
-        if ((netloc and netloc != host) or (path_netloc and path_netloc != host)):
-            return None
-
-        if (module not in self.statics or static != 'static' or not resource):
-            return None
-
-        try:
-            return file_path(f'{module}/static/{resource}')
-        except FileNotFoundError:
-            return None
-
     @lazy_property
     def nodb_routing_map(self): #ichecked
         nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
@@ -1686,5 +1816,17 @@ class Application:
 
         return nodb_routing_map
     
+    def set_csp(self, response): #ichecked
+        """ Set the Content Security Policiy headers, """
+        headers = response.headers
+        headers['X-Content-Type-Options'] = 'nosniff'
+
+        if 'Content-Security-Policy' in headers:
+            return
+
+        if not headers.get('Content-Type', '').startswith('image/'):
+            return
+
+        headers['Content-Security-Policy'] = "default-src 'none'"
 
 root = Application()

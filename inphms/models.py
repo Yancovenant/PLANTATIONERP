@@ -52,10 +52,57 @@ import inphms
 from . import SUPERUSER_ID
 from . import api
 from . import tools
-
+# from .api import NewId
+# from .exceptions import AccessError, MissingError, ValidationError, UserError
+# from .tools import (
+#     clean_context, config, date_utils, discardattr,
+#     DEFAULT_SERVER_DATE_FORMAT, DEFAULT_SERVER_DATETIME_FORMAT, format_list,
+#     frozendict, get_lang, lazy_classproperty, OrderedSet,
+#     ormcache, partition, Query, split_every, unique,
+#     SQL, sql, groupby,
+# )
 from .tools import (
-    frozendict, lazy_classproperty
+    frozendict, lazy_classproperty, config, SQL
 )
+from .tools.lru import LRU
+# from .tools.misc import LastOrderedSet, ReversedIterable, unquote
+# from .tools.translate import _, LazyTranslate
+
+import typing
+if typing.TYPE_CHECKING:
+    from collections.abc import Reversible
+    from .modules.registry import Registry
+    # from inphms.api import Self, ValuesType, IdType
+
+# _lt = LazyTranslate('base')
+_logger = logging.getLogger(__name__)
+_unlink = logging.getLogger(__name__ + '.unlink')
+
+regex_alphanumeric = re.compile(r'^[a-z0-9_]+$')
+regex_order = re.compile(r'''
+    ^
+    (\s*
+        (?P<term>((?P<field>[a-z0-9_]+|"[a-z0-9_]+")(\.(?P<property>[a-z0-9_]+))?(:(?P<func>[a-z_]+))?))
+        (\s+(?P<direction>desc|asc))?
+        (\s+(?P<nulls>nulls\ first|nulls\ last))?
+        \s*
+        (,|$)
+    )+
+    (?<!,)
+    $
+''', re.IGNORECASE | re.VERBOSE)
+regex_object_name = re.compile(r'^[a-z0-9_.]+$')
+regex_pg_name = re.compile(r'^[a-z_][a-z0-9_$]*$', re.I)
+regex_field_agg = re.compile(r'(\w+)(?::(\w+)(?:\((\w+)\))?)?')  # For read_group
+regex_read_group_spec = re.compile(r'(\w+)(\.(\w+))?(?::(\w+))?$')  # For _read_group
+
+AUTOINIT_RECALCULATE_STORED_FIELDS = 1000
+GC_UNLINK_LIMIT = 100_000
+
+INSERT_BATCH_SIZE = 100
+UPDATE_BATCH_SIZE = 100
+SQL_DEFAULT = psycopg2.extensions.AsIs("DEFAULT")
+
 
 class MetaModel(api.Meta):
     """ The metaclass of all model classes.
@@ -207,8 +254,33 @@ class BaseModel(metaclass=MetaModel):
     _transient_max_hours = lazy_classproperty(lambda _: config.get('transient_age_limit'))
     "maximum idle lifetime (in hours), unlimited if ``0``"
 
+    #
+    # Instance creation
+    #
+    # An instance represents an ordered collection of records in a given
+    # execution environment. The instance object refers to the environment, and
+    # the records themselves are represented by their cache dictionary. The 'id'
+    # of each record is found in its corresponding cache dictionary.
+    #
+    # This design has the following advantages:
+    #  - cache access is direct and thus fast;
+    #  - one can consider records without an 'id' (see new records);
+    #  - the global cache is only an index to "resolve" a record 'id'.
+    #
+    def __init__(self, env: api.Environment, ids: tuple[IdType, ...], prefetch_ids: Reversible[IdType]):
+        """ Create a recordset instance.
+
+        :param env: an environment
+        :param ids: a tuple of record ids
+        :param prefetch_ids: a reversible iterable of record ids (for prefetching)
+        """
+        self.env = env
+        self._ids = ids
+        self._prefetch_ids = prefetch_ids
+
 AbstractModel = BaseModel
 
+# DONE
 class Model(AbstractModel):
     """ Main super-class for regular database-persisted Inphms models.
 

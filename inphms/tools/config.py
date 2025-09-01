@@ -51,7 +51,7 @@ def _get_default_datadir(): #ichecked
     # No "version" kwarg as session and filestore paths are shared against series
     return func(appname=release.product_name, appauthor=release.author)
 
-def _deduplicate_loggers(loggers):
+def _deduplicate_loggers(loggers): #ichecked
     """ Avoid saving multiple logging levels for the same loggers to a save
     file, that just takes space and the list can potentially grow unbounded
     if for some odd reason people use :option`--save`` all the time.
@@ -73,8 +73,14 @@ class configmanager(object):
         """
 
         self.options = {
-            'admin_pwd': 'supervisor',
+            'admin_passwd': 'admin',
+            'csv_internal_sep': ',',
+            'publisher_warranty_url': 'http://services.inphms.com/publisher-warranty/',
+            'reportgz': False,
             'root_path': None,
+            'websocket_keep_alive_timeout': 3600,
+            'websocket_rate_limit_burst': 10,
+            'websocket_rate_limit_delay': 0.2,
         }
 
         # Not exposed in the configuration file.
@@ -777,5 +783,17 @@ class configmanager(object):
         if not path:
             return ''
         return normcase(realpath(abspath(expanduser(expandvars(path.strip())))))
+
+    def verify_admin_password(self, password):
+        """Verifies the super-admin password, possibly updating the stored hash if needed"""
+        stored_hash = self.options['admin_passwd']
+        if not stored_hash:
+            # empty password/hash => authentication forbidden
+            return False
+        result, updated_hash = crypt_context.verify_and_update(password, stored_hash)
+        if result:
+            if updated_hash:
+                self.options['admin_passwd'] = updated_hash
+            return True
 
 config = configmanager()

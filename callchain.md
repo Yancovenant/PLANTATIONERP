@@ -502,11 +502,38 @@ python inphms-bin --<config-params>
                                                                                                                                                         - return `self.request.registry['ir.http']._dispatch(endpoint)` @see registry.py
                                                                                                                                                     - else:
                                                                                                                                                         - return endpoint(**self.request.params)
+                                                                                                                                                - `self.dispatcher.post_dispatch(response)`:
+                                                                                                                                                    - `self.request._save_session()`:
+                                                                                                                                                        - if sess.`should_rotate`:
+                                                                                                                                                            - `root.session_store.rotate(sess, self.env)`:
+                                                                                                                                                                - delete
+                                                                                                                                                                - generate
+                                                                                                                                                                - save
+                                                                                                                                                        - if sess.is_dirty:
+                                                                                                                                                            - save
+                                                                                                                                                        - cookie_sid = self.cookies.get('session_id')
+                                                                                                                                                        - if sess.is_dirty or cookie_sid != sess.sid:
+                                                                                                                                                            - set_cookie
+                                                                                                                                                    - `self.request._inject_future_response(response)`:
+                                                                                                                                                        - response.headers.extend(self.future_response.headers)
+                                                                                                                                                    - `root.set_csp(response)`:
+                                                                                                                                                        - set content security policy headers.
+                                                                                                                                                - return response
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:
                                                                                                                                     - return `response(environ, start_response)`
                                                                                                                                 - Except Exception:
-                                                                                                                                    - ``
+                                                                                                                                    - log, response.
+                                                                                                                                    - `dispatch.handle_error(exc)`:
+                                                                                                                                        - session.logout(keep_db=True)
+                                                                                                                                        - response = self.request.redirect_query('/web/login', {'redirect': self.request.httprequest.full_path})
+                                                                                                                                        - if was_connected:
+                                                                                                                                            - `root.session_store.rotate(session, self.request.env)`:
+                                                                                                                                                - delete
+                                                                                                                                                - generate
+                                                                                                                                                - save
+                                                                                                                                        - response.set_cookie('session_id', session.sid, max_age=get_session_max_inactivity(self.env), httponly=True)
+                                                                                                                                        - return response
                                                                                                                                 - Finally:
                                                                                                                                     - `_request_stack.pop()`
                                                                                                             - Except Exception:

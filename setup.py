@@ -29,6 +29,7 @@ setup(
         'decorator',
         'requests',
         'babel >= 1.0',
+        'lxml',  # windows binary http://www.lfd.uci.edu/~gohlke/pythonlibs/
     ],
     python_requires='>=3.10',
     extras_require={

@@ -1,0 +1,3 @@
+"id","name","code","iso_code","direction","grouping","decimal_point","thousands_sep","date_format","time_format","short_time_format","week_start"
+"base.lang_en","English (US)","en_US","en","Left-to-Right","[3,0]",".",",","%m/%d/%Y","%H:%M:%S","%H:%M","7"
+"base.lang_id","Indonesian / Bahasa Indonesia","id_ID","id","Left-to-Right","[3,0]",",",".","%d/%m/%Y","%H:%M:%S","%H:%M","7"

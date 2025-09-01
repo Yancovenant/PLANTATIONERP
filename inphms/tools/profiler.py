@@ -167,3 +167,111 @@ class Profiler:
 
     def __exit__(self, *args):
         self.end()
+    
+
+class QwebTracker():
+
+    @classmethod
+    def wrap_render(cls, method_render):
+        @functools.wraps(method_render)
+        def _tracked_method_render(self, template, values=None, **options):
+            current_thread = threading.current_thread()
+            execution_context_enabled = getattr(current_thread, 'profiler_params', {}).get('execution_context_qweb')
+            qweb_hooks = getattr(current_thread, 'qweb_hooks', ())
+            if execution_context_enabled or qweb_hooks:
+                # To have the new compilation cached because the generated code will change.
+                # Therefore 'profile' is a key to the cache.
+                options['profile'] = True
+            return method_render(self, template, values, **options)
+        return _tracked_method_render
+    
+    @classmethod
+    def wrap_compile(cls, method_compile):
+        @functools.wraps(method_compile)
+        def _tracked_compile(self, template):
+            if not self.env.context.get('profile'):
+                return method_compile(self, template)
+
+            template_functions, def_name = method_compile(self, template)
+            render_template = template_functions[def_name]
+
+            def profiled_method_compile(self, values):
+                options = template_functions['options']
+                ref = options.get('ref')
+                ref_xml = options.get('ref_xml')
+                qweb_tracker = QwebTracker(ref, ref_xml, self.env.cr)
+                self = self.with_context(qweb_tracker=qweb_tracker)
+                if qweb_tracker.execution_context_enabled:
+                    with ExecutionContext(template=ref):
+                        return render_template(self, values)
+                return render_template(self, values)
+            template_functions[def_name] = profiled_method_compile
+
+            return (template_functions, def_name)
+        return _tracked_compile
+
+    @classmethod
+    def wrap_compile_directive(cls, method_compile_directive):
+        @functools.wraps(method_compile_directive)
+        def _tracked_compile_directive(self, el, options, directive, level):
+            if not options.get('profile') or directive in ('inner-content', 'tag-open', 'tag-close'):
+                return method_compile_directive(self, el, options, directive, level)
+            enter = f"{' ' * 4 * level}self.env.context['qweb_tracker'].enter_directive({directive!r}, {el.attrib!r}, {options['_qweb_error_path_xml'][0]!r})"
+            leave = f"{' ' * 4 * level}self.env.context['qweb_tracker'].leave_directive({directive!r}, {el.attrib!r}, {options['_qweb_error_path_xml'][0]!r})"
+            code_directive = method_compile_directive(self, el, options, directive, level)
+            return [enter, *code_directive, leave] if code_directive else []
+        return _tracked_compile_directive
+    
+    def __init__(self, view_id, arch, cr):
+        current_thread = threading.current_thread()  # don't store current_thread on self
+        self.execution_context_enabled = getattr(current_thread, 'profiler_params', {}).get('execution_context_qweb')
+        self.qweb_hooks = getattr(current_thread, 'qweb_hooks', ())
+        self.context_stack = []
+        self.cr = cr
+        self.view_id = view_id
+        for hook in self.qweb_hooks:
+            hook('render', self.cr.sql_log_count, view_id=view_id, arch=arch)
+
+    def enter_directive(self, directive, attrib, xpath):
+        execution_context = None
+        if self.execution_context_enabled:
+            directive_info = {}
+            if ('t-' + directive) in attrib:
+                directive_info['t-' + directive] = repr(attrib['t-' + directive])
+            if directive == 'set':
+                if 't-value' in attrib:
+                    directive_info['t-value'] = repr(attrib['t-value'])
+                if 't-valuef' in attrib:
+                    directive_info['t-valuef'] = repr(attrib['t-valuef'])
+
+                for key in attrib:
+                    if key.startswith('t-set-') or key.startswith('t-setf-'):
+                        directive_info[key] = repr(attrib[key])
+            elif directive == 'foreach':
+                directive_info['t-as'] = repr(attrib['t-as'])
+            elif directive == 'groups' and 'groups' in attrib and not directive_info.get('t-groups'):
+                directive_info['t-groups'] = repr(attrib['groups'])
+            elif directive == 'att':
+                for key in attrib:
+                    if key.startswith('t-att-') or key.startswith('t-attf-'):
+                        directive_info[key] = repr(attrib[key])
+            elif directive == 'options':
+                for key in attrib:
+                    if key.startswith('t-options-'):
+                        directive_info[key] = repr(attrib[key])
+            elif ('t-' + directive) not in attrib:
+                directive_info['t-' + directive] = None
+
+            execution_context = tools.profiler.ExecutionContext(**directive_info, xpath=xpath)
+            execution_context.__enter__()
+            self.context_stack.append(execution_context)
+
+        for hook in self.qweb_hooks:
+            hook('enter', self.cr.sql_log_count, view_id=self.view_id, xpath=xpath, directive=directive, attrib=attrib)
+
+    def leave_directive(self, directive, attrib, xpath):
+        if self.execution_context_enabled:
+            self.context_stack.pop().__exit__()
+
+        for hook in self.qweb_hooks:
+            hook('leave', self.cr.sql_log_count, view_id=self.view_id, xpath=xpath, directive=directive, attrib=attrib)
