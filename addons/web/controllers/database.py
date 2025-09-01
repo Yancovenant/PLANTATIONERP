@@ -60,6 +60,4 @@ class Database(http.Controller):
     def selector(self, **kw):
         if request.db:
             request.env.cr.close()
-        res = self._render_template(manage=False)
-        print(res)
         return self._render_template(manage=False)

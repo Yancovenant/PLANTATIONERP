@@ -73,6 +73,7 @@ if typing.TYPE_CHECKING:
     from collections.abc import Reversible
     from .modules.registry import Registry
     # from inphms.api import Self, ValuesType, IdType
+    from inphms.api import IdType
 
 # _lt = LazyTranslate('base')
 _logger = logging.getLogger(__name__)

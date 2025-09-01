@@ -30,7 +30,7 @@ from inphms.tools import SQL
 
 _logger = logging.getLogger(__name__)
 
-def list_db_incompatible(databases):
+def list_db_incompatible(databases): #ichecked
     """"Check a list of databases if they are compatible with this version of Inphms
 
         :param databases: A list of existing Postgresql databases
@@ -57,7 +57,7 @@ def list_db_incompatible(databases):
         inphms.sql_db.close_db(database_name)
     return incompatible_databases
 
-def exp_list_countries():
+def exp_list_countries(): #ichecked
     list_countries = []
     root = ET.parse(os.path.join(inphms.tools.config['root_path'], 'addons/base/data/res_country_data.xml')).getroot()
     for country in root.find('data').findall('record[@model="res.country"]'):
@@ -66,7 +66,7 @@ def exp_list_countries():
         list_countries.append([code, name])
     return sorted(list_countries, key=lambda c: c[1])
 
-def exp_list_lang():
+def exp_list_lang(): #ichecked
     return inphms.tools.misc.scan_languages()
 
 def list_dbs(force=False):
