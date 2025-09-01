@@ -73,7 +73,7 @@ if typing.TYPE_CHECKING:
     from collections.abc import Reversible
     from .modules.registry import Registry
     # from inphms.api import Self, ValuesType, IdType
-    from inphms.api import IdType
+    from inphms.api import IdType, Self
 
 # _lt = LazyTranslate('base')
 _logger = logging.getLogger(__name__)
@@ -278,6 +278,72 @@ class BaseModel(metaclass=MetaModel):
         self.env = env
         self._ids = ids
         self._prefetch_ids = prefetch_ids
+    
+    #
+    # Internal properties, for manipulating the instance's implementation
+    #
+
+    # @property
+    # def ids(self) -> list[int]:
+    #     """ Return the list of actual record ids corresponding to ``self``. """
+    #     return list(origin_ids(self._ids))
+
+    # backward-compatibility with former browse records
+    _cr = property(lambda self: self.env.cr)
+    _uid = property(lambda self: self.env.uid)
+    _context = property(lambda self: self.env.context)
+    
+    @api.private
+    def with_env(self, env: api.Environment) -> Self: #ichecked
+        """Return a new version of this recordset attached to the provided environment.
+
+        :param env:
+        :type env: :class:`~inphms.api.Environment`
+
+        .. note::
+            The returned recordset has the same prefetch object as ``self``.
+        """
+        return self.__class__(env, self._ids, self._prefetch_ids)
+
+    @api.private
+    def with_context(self, *args, **kwargs) -> Self: #ichecked
+        """ with_context([context][, **overrides]) -> Model
+
+        Returns a new version of this recordset attached to an extended
+        context.
+
+        The extended context is either the provided ``context`` in which
+        ``overrides`` are merged or the *current* context in which
+        ``overrides`` are merged e.g.::
+
+            # current context is {'key1': True}
+            r2 = records.with_context({}, key2=True)
+            # -> r2._context is {'key2': True}
+            r2 = records.with_context(key2=True)
+            # -> r2._context is {'key1': True, 'key2': True}
+
+        .. note:
+
+            The returned recordset has the same prefetch object as ``self``.
+        """  # noqa: RST210
+        if (args and 'force_company' in args[0]) or 'force_company' in kwargs:
+            _logger.warning(
+                "Context key 'force_company' is no longer supported. "
+                "Use with_company(company) instead.",
+                stack_info=True,
+            )
+        if (args and 'company' in args[0]) or 'company' in kwargs:
+            _logger.warning(
+                "Context key 'company' is not recommended, because "
+                "of its special meaning in @depends_context.",
+                stack_info=True,
+            )
+        context = dict(args[0] if args else self._context, **kwargs)
+        if 'allowed_company_ids' not in context and 'allowed_company_ids' in self._context:
+            # Force 'allowed_company_ids' to be kept when context is overridden
+            # without 'allowed_company_ids'
+            context['allowed_company_ids'] = self._context['allowed_company_ids']
+        return self.with_env(self.env(context=context))
 
 AbstractModel = BaseModel
 

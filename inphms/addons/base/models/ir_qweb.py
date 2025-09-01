@@ -391,12 +391,13 @@ from psycopg2.extensions import TransactionRollbackError
 from inphms import api, models, tools
 from inphms.modules import registry
 # from inphms.tools import config, safe_eval, pycompat
+from inphms.tools import config, safe_eval
 # from inphms.tools.constants import SUPPORTED_DEBUGGER, EXTERNAL_ASSET
-# from inphms.tools.safe_eval import assert_valid_codeobj, _BUILTINS, to_opcodes, _EXPR_OPCODES, _BLACKLIST
-# from inphms.tools.json import scriptsafe
+from inphms.tools.safe_eval import assert_valid_codeobj, _BUILTINS, to_opcodes, _EXPR_OPCODES, _BLACKLIST
+from inphms.tools.json import scriptsafe
 from inphms.tools.lru import LRU
 # from inphms.tools.misc import str2bool
-# from inphms.tools.image import image_data_uri, FILETYPE_BASE64_MAGICWORD
+from inphms.tools.image import image_data_uri, FILETYPE_BASE64_MAGICWORD
 from inphms.http import request
 from inphms.tools.profiler import QwebTracker
 # from inphms.exceptions import UserError, AccessDenied, AccessError, MissingError, ValidationError
@@ -410,6 +411,95 @@ _logger = logging.getLogger(__name__)
 # QWeb token usefull for generate expression used in `_compile_expr_tokens` method
 token.QWEB = token.NT_OFFSET - 1
 token.tok_name[token.QWEB] = 'QWEB'
+
+
+# security safe eval opcodes for generated expression validation, used in `_compile_expr`
+_SAFE_QWEB_OPCODES = _EXPR_OPCODES.union(to_opcodes([
+    'MAKE_FUNCTION', 'CALL_FUNCTION', 'CALL_FUNCTION_KW', 'CALL_FUNCTION_EX',
+    'CALL_METHOD', 'LOAD_METHOD',
+
+    'GET_ITER', 'FOR_ITER', 'YIELD_VALUE',
+    'JUMP_FORWARD', 'JUMP_ABSOLUTE', 'JUMP_BACKWARD',
+    'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP', 'POP_JUMP_IF_FALSE', 'POP_JUMP_IF_TRUE',
+
+    'LOAD_NAME', 'LOAD_ATTR',
+    'LOAD_FAST', 'STORE_FAST', 'UNPACK_SEQUENCE',
+    'STORE_SUBSCR',
+    'LOAD_GLOBAL',
+    'EXTENDED_ARG',
+    # Following opcodes were added in 3.11 https://docs.python.org/3/whatsnew/3.11.html#new-opcodes
+    'RESUME',
+    'CALL',
+    'PRECALL',
+    'PUSH_NULL',
+    'KW_NAMES',
+    'FORMAT_VALUE', 'BUILD_STRING',
+    'RETURN_GENERATOR',
+    'SWAP',
+    'POP_JUMP_FORWARD_IF_FALSE', 'POP_JUMP_FORWARD_IF_TRUE',
+    'POP_JUMP_BACKWARD_IF_FALSE', 'POP_JUMP_BACKWARD_IF_TRUE',
+    'POP_JUMP_FORWARD_IF_NONE', 'POP_JUMP_FORWARD_IF_NOT_NONE',
+    'POP_JUMP_BACKWARD_IF_NONE', 'POP_JUMP_BACKWARD_IF_NOT_NONE',
+    # 3.12 https://docs.python.org/3/whatsnew/3.12.html#new-opcodes
+    'END_FOR',
+    'LOAD_FAST_AND_CLEAR',
+    'POP_JUMP_IF_NOT_NONE', 'POP_JUMP_IF_NONE',
+    'RERAISE',
+    'CALL_INTRINSIC_1',
+    'STORE_SLICE',
+    # 3.13
+    'CALL_KW', 'LOAD_FAST_LOAD_FAST',
+    'STORE_FAST_STORE_FAST', 'STORE_FAST_LOAD_FAST',
+    'CONVERT_VALUE', 'FORMAT_SIMPLE', 'FORMAT_WITH_SPEC',
+    'SET_FUNCTION_ATTRIBUTE',
+])) - _BLACKLIST
+
+
+# eval to compile generated string python code into binary code, used in `_compile`
+unsafe_eval = eval
+
+
+VOID_ELEMENTS = frozenset([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'keygen',
+    'link', 'menuitem', 'meta', 'param', 'source', 'track', 'wbr'])
+# Terms allowed in addition to AVAILABLE_OBJECTS when compiling python expressions
+ALLOWED_KEYWORD = frozenset(['False', 'None', 'True', 'and', 'as', 'elif', 'else', 'for', 'if', 'in', 'is', 'not', 'or'] + list(_BUILTINS))
+# regexpr for string formatting and extract ( ruby-style )|( jinja-style  ) used in `_compile_format`
+FORMAT_REGEX = re.compile(r'(?:#\{(.+?)\})|(?:\{\{(.+?)\}\})')
+RSTRIP_REGEXP = re.compile(r'\n[ \t]*$')
+LSTRIP_REGEXP = re.compile(r'^[ \t]*\n')
+FIRST_RSTRIP_REGEXP = re.compile(r'^(\n[ \t]*)+(\n[ \t])')
+VARNAME_REGEXP = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+TO_VARNAME_REGEXP = re.compile(r'[^A-Za-z0-9_]+')
+# Attribute name used outside the context of the QWeb.
+SPECIAL_DIRECTIVES = {'t-translation', 't-ignore', 't-title'}
+# Name of the variable to insert the content in t-call in the template.
+# The slot will be replaced by the `t-call` tag content of the caller.
+T_CALL_SLOT = '0'
+
+
+def keep_query(*keep_params, **additional_params):
+    """
+    Generate a query string keeping the current request querystring's parameters specified
+    in ``keep_params`` and also adds the parameters specified in ``additional_params``.
+
+    Multiple values query string params will be merged into a single one with comma seperated
+    values.
+
+    The ``keep_params`` arguments can use wildcards too, eg:
+
+        keep_query('search', 'shop_*', page=4)
+    """
+    if not keep_params and not additional_params:
+        keep_params = ('*',)
+    params = additional_params.copy()
+    qs_keys = list(request.httprequest.args) if request else []
+    for keep_param in keep_params:
+        for param in fnmatch.filter(qs_keys, keep_param):
+            if param not in additional_params and param in qs_keys:
+                params[param] = request.httprequest.args.getlist(param)
+    return werkzeug.urls.url_encode(params)
+
 
 ####################################
 ###             QWeb             ###
@@ -449,6 +539,116 @@ class IrQWeb(models.AbstractModel):
                   instead of `str`)
         :rtype: MarkupSafe
         """
+        values = values.copy() if values else {}
+        if T_CALL_SLOT in values:
+            raise ValueError(f'values[{T_CALL_SLOT}] should be unset when call the _render method and only set into the template.')
+
+        irQweb = self.with_context(**options)._prepare_environment(values)
+
+        safe_eval.check_values(values)
+
+        template_functions, def_name = irQweb._compile(template)
+        render_template = template_functions[def_name]
+        rendering = render_template(irQweb, values)
+        result = ''.join(rendering)
+
+        return Markup(result)
+    
+    # assume cache will be invalidated by third party on write to ir.ui.view
+    def _get_template_cache_keys(self):
+        """ Return the list of context keys to use for caching ``_compile``. """
+        return ['lang', 'inherit_branding', 'inherit_branding_auto', 'edit_translations', 'profile']
+    
+    @tools.conditional(
+        'xml' not in tools.config['dev_mode'],
+        tools.ormcache('template', 'tuple(self.env.context.get(k) for k in self._get_template_cache_keys())', cache='templates'),
+    )
+    def _get_view_id(self, template):
+        try:
+            return self.env['ir.ui.view'].sudo().with_context(load_all_views=True)._get_view_id(template)
+        except Exception:
+            return None
+    
+    @QwebTracker.wrap_compile
+    def _compile(self, template):
+        if isinstance(template, etree._Element):
+            self = self.with_context(is_t_cache_disabled=True)
+            ref = None
+        else:
+            ref = self._get_view_id(template)
+
+        # define the base key cache for code in cache and t-cache feature
+        base_key_cache = None
+        if ref:
+            base_key_cache = self._get_cache_key(tuple([ref] + [self.env.context.get(k) for k in self._get_template_cache_keys()]))
+        self = self.with_context(__qweb_base_key_cache=base_key_cache)
+
+    # values for running time
+
+    def _get_converted_image_data_uri(self, base64_source):
+        if self.env.context.get('webp_as_jpg'):
+            mimetype = FILETYPE_BASE64_MAGICWORD.get(base64_source[:1], 'png')
+            if 'webp' in mimetype:
+                # Use converted image so that is recognized by wkhtmltopdf.
+                bin_source = base64.b64decode(base64_source)
+                Attachment = self.env['ir.attachment']
+                checksum = Attachment._compute_checksum(bin_source)
+                origins = Attachment.sudo().search([
+                    ['id', '!=', False],  # No implicit condition on res_field.
+                    ['checksum', '=', checksum],
+                ])
+                if origins:
+                    converted_domain = [
+                        ['id', '!=', False],  # No implicit condition on res_field.
+                        ['res_model', '=', 'ir.attachment'],
+                        ['res_id', 'in', origins.ids],
+                        ['mimetype', '=', 'image/jpeg'],
+                    ]
+                    converted = Attachment.sudo().search(converted_domain, limit=1)
+                    if converted:
+                        base64_source = converted.datas
+        return image_data_uri(base64_source)
+    
+    def _prepare_environment(self, values):
+        """ Prepare the values and context that will sent to the
+        compiled and evaluated function.
+
+        :param values: template values to be used for rendering
+
+        :returns self (with new context)
+        """
+        debug = request and request.session.debug or ''
+        values.update(
+            true=True,
+            false=False,
+        )
+        if not self.env.context.get('minimal_qcontext'):
+            values.setdefault('debug', debug)
+            values.setdefault('user_id', self.env.user.with_env(self.env))
+            values.setdefault('res_company', self.env.company.sudo())
+            values.update(
+                request=request,  # might be unbound if we're not in an httprequest context
+                test_mode_enabled=bool(config['test_enable'] or config['test_file']),
+                json=scriptsafe,
+                quote_plus=werkzeug.urls.url_quote_plus,
+                time=safe_eval.time,
+                datetime=safe_eval.datetime,
+                relativedelta=relativedelta,
+                image_data_uri=self._get_converted_image_data_uri,
+                # specific 'math' functions to ease rounding in templates and lessen controller marshmalling
+                floor=math.floor,
+                ceil=math.ceil,
+                env=self.env,
+                lang=self.env.context.get('lang'),
+                keep_query=keep_query,
+            )
+
+        context = {'dev_mode': 'qweb' in tools.config['dev_mode']}
+        if 'xml' in tools.config['dev_mode']:
+            context['is_t_cache_disabled'] = True
+        elif 'disable-t-cache' in debug:
+            context['is_t_cache_disabled'] = True
+        return self.with_context(**context)
 
 def render(template_name, values, load, **options):
     """ Rendering of a qweb template without database and outside the registry.

@@ -28,8 +28,9 @@ except ImportError:
 
 # from .exceptions import AccessError, UserError, CacheMiss
 # from .tools import clean_context, frozendict, lazy_property, OrderedSet, Query, SQL
+from .tools import frozendict, lazy_property, SQL, OrderedSet
 # from .tools.translate import get_translation, get_translated_module, LazyGettext
-# from inphms.tools.misc import StackMap
+from inphms.tools.misc import StackMap
 
 import typing
 if typing.TYPE_CHECKING:
@@ -93,6 +94,67 @@ class NewId:
 
 IdType: typing.TypeAlias = int | NewId
 
+
+# sentinel value for optional parameters
+NOTHING = object()
+EMPTY_DICT = frozendict()
+
+
+class Cache:
+    """ Implementation of the cache of records.
+
+    For most fields, the cache is simply a mapping from a record and a field to
+    a value.  In the case of context-dependent fields, the mapping also depends
+    on the environment of the given record.  For the sake of performance, the
+    cache is first partitioned by field, then by record.  This makes some
+    common ORM operations pretty fast, like determining which records have a
+    value for a given field, or invalidating a given field on all possible
+    records.
+
+    The cache can also mark some entries as "dirty".  Dirty entries essentially
+    marks values that are different from the database.  They represent database
+    updates that haven't been done yet.  Note that dirty entries only make
+    sense for stored fields.  Note also that if a field is dirty on a given
+    record, and the field is context-dependent, then all the values of the
+    record for that field are considered dirty.  For the sake of consistency,
+    the values that should be in the database must be in a context where all
+    the field's context keys are ``None``.
+    """
+    __slots__ = ('_data', '_dirty', '_patches')
+
+    def __init__(self):
+        # {field: {record_id: value}, field: {context_key: {record_id: value}}}
+        self._data = defaultdict(dict)
+
+        # {field: set[id]} stores the fields and ids that are changed in the
+        # cache, but not yet written in the database; their changed values are
+        # in `_data`
+        self._dirty = defaultdict(OrderedSet)
+
+        # {field: {record_id: ids}} record ids to be added to the values of
+        # x2many fields if they are not in cache yet
+        self._patches = defaultdict(lambda: defaultdict(list))
+
+
+class Transaction:
+    """ A object holding ORM data structures for a transaction. """
+    __slots__ = ('_Transaction__file_open_tmp_paths', 'cache', 'envs', 'protected', 'registry', 'tocompute')
+
+    def __init__(self, registry):
+        self.registry = registry
+        # weak set of environments
+        self.envs = WeakSet()
+        self.envs.data = OrderedSet()  # make the weakset OrderedWeakSet
+        # cache for all records
+        self.cache = Cache()
+        # fields to protect {field: ids}
+        self.protected = StackMap()
+        # pending computations {field: ids}
+        self.tocompute = defaultdict(OrderedSet)
+        # temporary directories (managed in odoo.tools.file_open_temporary_directory)
+        self.__file_open_tmp_paths = ()  # noqa: PLE0237
+
+
 class Environment(Mapping):
     """ The environment stores various contextual data used by the ORM:
 
@@ -105,17 +167,72 @@ class Environment(Mapping):
     names to models. It also holds a cache for records, and a data
     structure to manage recomputations.
     """
-    # cr: BaseCursor
-    # uid: int
-    # context: frozendict
-    # su: bool
-    # registry: Registry
-    # cache: Cache
-    # transaction: Transaction
+    cr: BaseCursor
+    uid: int
+    context: frozendict
+    su: bool
+    registry: Registry
+    cache: Cache
+    transaction: Transaction
 
     def reset(self):
         """ Reset the transaction, see :meth:`Transaction.reset`. """
         self.transaction.reset()
+    
+    def __new__(cls, cr, uid, context, su=False, uid_origin=None):
+        assert isinstance(cr, BaseCursor)
+        if uid == SUPERUSER_ID:
+            su = True
+
+        # isinstance(uid, int) is to handle `RequestUID`
+        uid_origin = uid_origin or (uid if isinstance(uid, int) else None)
+        if uid_origin == SUPERUSER_ID:
+            uid_origin = None
+
+        # determine transaction object
+        transaction = cr.transaction
+        if transaction is None:
+            transaction = cr.transaction = Transaction(Registry(cr.dbname))
+
+        # if env already exists, return it
+        for env in transaction.envs:
+            if (env.cr, env.uid, env.su, env.uid_origin, env.context) == (cr, uid, su, uid_origin, context):
+                return env
+
+        # otherwise create environment, and add it in the set
+        self = object.__new__(cls)
+        self.cr, self.uid, self.su, self.uid_origin = cr, uid, su, uid_origin
+        self.context = frozendict(context)
+        self.transaction = transaction
+        self.registry = transaction.registry
+        self.cache = transaction.cache
+
+        self._cache_key = {}                    # memo {field: cache_key}
+        self._protected = transaction.protected
+
+        transaction.envs.add(self)
+        return self
+    
+    #
+    # Mapping methods
+    #
+    
+
+def private(method): #ichecked
+    """ Decorate a record-style method to indicate that the method cannot be
+        called using RPC. Example::
+
+            @api.private
+            def method(self, args):
+                ...
+
+        If you have business methods that should not be called over RPC, you
+        should prefix them with "_". This decorator may be used in case of
+        existing public methods that become non-RPC callable or for ORM
+        methods.
+    """
+    method._api_private = True
+    return method
 
 def propagate(method1, method2):
     """ Propagate decorators from ``method1`` to ``method2``, and return the
@@ -127,6 +244,7 @@ def propagate(method1, method2):
                 setattr(method2, attr, getattr(method1, attr))
     return method2
 
+# DONE
 class Meta(type):
     """ Metaclass that automatically decorates traditional-style methods by
         guessing their API. It also implements the inheritance of the
@@ -148,7 +266,7 @@ class Meta(type):
 _create_logger = logging.getLogger(__name__ + '.create')
 
 @decorator
-def _model_create_single(create, self, arg):
+def _model_create_single(create, self, arg): #ichecked
     # 'create' expects a dict and returns a record
     if isinstance(arg, Mapping):
         return create(self, arg)
@@ -156,7 +274,7 @@ def _model_create_single(create, self, arg):
         _create_logger.debug("%s.create() called with %d dicts", self, len(arg))
     return self.browse().concat(*(create(self, vals) for vals in arg))
 
-def model_create_single(method: T) -> T:
+def model_create_single(method: T) -> T: #ichecked
     """ Decorate a method that takes a dictionary and creates a single record.
         The method may be called with either a single dict or a list of dicts::
 
@@ -171,7 +289,7 @@ def model_create_single(method: T) -> T:
     wrapper._api = 'model_create'
     return wrapper
 
-def model(method: T) -> T:
+def model(method: T) -> T: #ichecked
     """ Decorate a record-style method where ``self`` is a recordset, but its
         contents is not relevant, only the model is. Such a method::
 
@@ -184,3 +302,9 @@ def model(method: T) -> T:
         return model_create_single(method)
     method._api = 'model'
     return method
+
+
+# keep those imports here in order to handle cyclic dependencies correctly
+from inphms import SUPERUSER_ID
+from inphms.modules.registry import Registry
+from .sql_db import BaseCursor

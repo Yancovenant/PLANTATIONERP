@@ -61,6 +61,7 @@ __all__ = [
     'unique',
     'DotDict',
     'consteq',
+    'OrderedSet',
 ]
 
 _logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ _logger = logging.getLogger(__name__)
 # File paths
 # ----------------------------------------------------------
 
-def file_path(file_path: str, filter_ext: tuple[str, ...] = ('',), env: Environment | None = None) -> str:
+def file_path(file_path: str, filter_ext: tuple[str, ...] = ('',), env: Environment | None = None) -> str: #ichecked
     """Verify that a file exists under a known `addons_path` directory and return its full path.
 
     Examples::
@@ -110,7 +111,7 @@ def file_path(file_path: str, filter_ext: tuple[str, ...] = ('',), env: Environm
 
     raise FileNotFoundError("File not found: " + file_path)
 
-def file_open(name: str, mode: str = "r", filter_ext: tuple[str, ...] = (), env: Environment | None = None):
+def file_open(name: str, mode: str = "r", filter_ext: tuple[str, ...] = (), env: Environment | None = None): #ichecked
     """Open a file from within the addons_path directories, as an absolute or relative path.
 
     Examples::
@@ -165,7 +166,7 @@ def reverse_enumerate(lst: Sequence[T]) -> Iterator[tuple[int, T]]: #ichecked
     """
     return zip(range(len(lst) - 1, -1, -1), reversed(lst))
 
-def scan_languages() -> list[tuple[str, str]]:
+def scan_languages() -> list[tuple[str, str]]: #ichecked
     """ Returns all languages supported by OpenERP for translation
 
     :returns: a list of (lang_code, lang_name) pairs
@@ -427,3 +428,78 @@ class DotDict(dict):
         return DotDict(val) if isinstance(val, dict) else val
 
 consteq = hmac_lib.compare_digest
+
+class StackMap(MutableMapping[K, T], typing.Generic[K, T]):
+    """ A stack of mappings behaving as a single mapping, and used to implement
+        nested scopes. The lookups search the stack from top to bottom, and
+        returns the first value found. Mutable operations modify the topmost
+        mapping only.
+    """
+    __slots__ = ['_maps']
+
+    def __init__(self, m: MutableMapping[K, T] | None = None):
+        self._maps = [] if m is None else [m]
+
+    def __getitem__(self, key: K) -> T:
+        for mapping in reversed(self._maps):
+            try:
+                return mapping[key]
+            except KeyError:
+                pass
+        raise KeyError(key)
+
+    def __setitem__(self, key: K, val: T):
+        self._maps[-1][key] = val
+
+    def __delitem__(self, key: K):
+        del self._maps[-1][key]
+
+    def __iter__(self) -> Iterator[K]:
+        return iter({key for mapping in self._maps for key in mapping})
+
+    def __len__(self) -> int:
+        return sum(1 for key in self)
+
+    def __str__(self) -> str:
+        return f"<StackMap {self._maps}>"
+
+    def pushmap(self, m: MutableMapping[K, T] | None = None):
+        self._maps.append({} if m is None else m)
+
+    def popmap(self) -> MutableMapping[K, T]:
+        return self._maps.pop()
+
+class OrderedSet(MutableSet[T], typing.Generic[T]):
+    """ A set collection that remembers the elements first insertion order. """
+    __slots__ = ['_map']
+
+    def __init__(self, elems=()):
+        self._map: dict[T, None] = dict.fromkeys(elems)
+
+    def __contains__(self, elem):
+        return elem in self._map
+
+    def __iter__(self):
+        return iter(self._map)
+
+    def __len__(self):
+        return len(self._map)
+
+    def add(self, elem):
+        self._map[elem] = None
+
+    def discard(self, elem):
+        self._map.pop(elem, None)
+
+    def update(self, elems):
+        self._map.update(zip(elems, itertools.repeat(None)))
+
+    def difference_update(self, elems):
+        for elem in elems:
+            self.discard(elem)
+
+    def __repr__(self):
+        return f'{type(self).__name__}({list(self)!r})'
+
+    def intersection(self, *others):
+        return reduce(OrderedSet.__and__, others, self)
