@@ -493,8 +493,15 @@ python inphms-bin --<config-params>
                                                                                                                                                             - return self.request.redirect('/web/database/selector')
                                                                                                                                                         - token = self.request.params.pop('csrf_token', None)
                                                                                                                                                         - if not self.request.`validate_csrf(token)`:
-                                                                                                                                                            - 
-                                                                                                                                                    
+                                                                                                                                                            - hm, _, max_ts = csrf.rpartition('o')
+                                                                                                                                                            - token expiry check
+                                                                                                                                                            - token validation check.
+                                                                                                                                                        - if False: would check:
+                                                                                                                                                            - if its missing or failed validation.
+                                                                                                                                                    - if self.request.db:
+                                                                                                                                                        - return `self.request.registry['ir.http']._dispatch(endpoint)` @see registry.py
+                                                                                                                                                    - else:
+                                                                                                                                                        - return endpoint(**self.request.params)
                                                                                                                                     - else:
                                                                                                                                         - `response = request._serve_nodb()`:
                                                                                                                                     - return `response(environ, start_response)`

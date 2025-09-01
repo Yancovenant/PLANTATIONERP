@@ -93,7 +93,7 @@ from .modules.registry import Registry
 from .service import security, model as service_model
 from .tools import (
     parse_version, config, file_path,
-    profiler, unique
+    profiler, unique, consteq
 )
 from .tools.func import lazy_property, filter_kwargs
 from .tools.misc import submap
@@ -792,7 +792,7 @@ class Request:
         threading.current_thread().url = httprequest.url
         self.httprequest = httprequest
 
-    def validate_csrf(self, csrf):
+    def validate_csrf(self, csrf): #ichecked
         """
         Is the given csrf token valid ?
 
@@ -1222,7 +1222,7 @@ class HttpDispatcher(Dispatcher):
     def is_compatible_with(cls, request): #ichecked
         return True
 
-    def dispatch(self, endpoint, args):
+    def dispatch(self, endpoint, args): #ichecked
         """
         Perform http-related actions such as deserializing the request
         body and query-string and checking cors/csrf while dispatching a

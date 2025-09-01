@@ -60,6 +60,7 @@ __all__ = [
     'frozendict',
     'unique',
     'DotDict',
+    'consteq',
 ]
 
 _logger = logging.getLogger(__name__)
@@ -402,3 +403,4 @@ class DotDict(dict):
         val = self.get(attrib)
         return DotDict(val) if isinstance(val, dict) else val
 
+consteq = hmac_lib.compare_digest
