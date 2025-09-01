@@ -15,8 +15,8 @@ def patch_all():
 
     from .codecs import patch_codecs
     patch_codecs()
-    # from .email import patch_email
-    # patch_email()
+    from .email import patch_email
+    patch_email()
     # from .mimetypes import patch_mimetypes
     # patch_mimetypes()
     # from .pytz import patch_pytz
