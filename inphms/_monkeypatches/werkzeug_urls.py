@@ -1,5 +1,4 @@
 # ruff: noqa: PLC0415 (import in function not at top-level)
-
 from __future__ import annotations
 
 import contextlib
@@ -21,7 +20,6 @@ from werkzeug.wrappers import Request, Response
 Rule_get_func_code = hasattr(Rule, '_get_func_code') and Rule._get_func_code
 
 _default_encoding = sys.getdefaultencoding()
-
 
 
 if t.TYPE_CHECKING:
@@ -48,40 +46,6 @@ _hextobyte = {
 }
 _bytetohex = [f"%{char:02X}".encode("ascii") for char in range(256)]
 
-def patch_werkzeug():
-    from ..tools.json import scriptsafe  # noqa: PLC0415
-    Request.json_module = Response.json_module = scriptsafe
-
-    FileStorage.save = lambda self, dst, buffer_size=(1 << 20): copyfileobj(self.stream, dst, buffer_size)
-
-    def _multidict_deepcopy(self, memo=None):
-        return orig_deepcopy(self)
-
-    orig_deepcopy = MultiDict.deepcopy
-    MultiDict.deepcopy = _multidict_deepcopy
-
-    if Rule_get_func_code:
-        @staticmethod
-        def _get_func_code(code, name):
-            assert isinstance(code, CodeType)
-            return Rule_get_func_code(code, name)
-        Rule._get_func_code = _get_func_code
-
-    if hasattr(urls, 'url_join'):
-        # URLs are already patched
-        return
-    # see https://github.com/pallets/werkzeug/compare/2.3.0..3.0.0
-    # see https://github.com/pallets/werkzeug/blob/2.3.0/src/werkzeug/urls.py for replacement
-    urls.url_decode = url_decode
-    urls.url_encode = url_encode
-    urls.url_join = url_join
-    urls.url_parse = url_parse
-    urls.url_quote = url_quote
-    urls.url_unquote = url_unquote
-    urls.url_quote_plus = url_quote_plus
-    urls.url_unquote_plus = url_unquote_plus
-    urls.url_unparse = url_unparse
-    urls.URL = URL
 
 class _URLTuple(t.NamedTuple):
     scheme: str
@@ -102,6 +66,294 @@ class BaseURL(_URLTuple):
     _colon: str
     _lbracket: str
     _rbracket: str
+
+    def __new__(cls, *args: t.Any, **kwargs: t.Any) -> BaseURL:  # noqa: PYI034
+        return super().__new__(cls, *args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.to_url()
+
+    def replace(self, **kwargs: t.Any) -> BaseURL:
+        """Return an URL with the same values, except for those parameters
+        given new values by whichever keyword arguments are specified."""
+        return self._replace(**kwargs)
+
+    @property
+    def host(self) -> str | None:
+        """The host part of the URL if available, otherwise `None`.  The
+        host is either the hostname or the IP address mentioned in the
+        URL.  It will not contain the port.
+        """
+        return self._split_host()[0]
+
+    @property
+    def ascii_host(self) -> str | None:
+        """Works exactly like :attr:`host` but will return a result that
+        is restricted to ASCII.  If it finds a netloc that is not ASCII
+        it will attempt to idna decode it.  This is useful for socket
+        operations when the URL might include internationalized characters.
+        """
+        rv = self.host
+        if rv is not None and isinstance(rv, str):
+            with contextlib.suppress(UnicodeError):
+                rv = rv.encode("idna").decode("ascii")
+        return rv
+
+    @property
+    def port(self) -> int | None:
+        """The port in the URL as an integer if it was present, `None`
+        otherwise.  This does not fill in default ports.
+        """
+        try:
+            rv = int(_to_str(self._split_host()[1]))
+            if 0 <= rv <= 65535:
+                return rv
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    @property
+    def auth(self) -> str | None:
+        """The authentication part in the URL if available, `None`
+        otherwise.
+        """
+        return self._split_netloc()[0]
+
+    @property
+    def username(self) -> str | None:
+        """The username if it was part of the URL, `None` otherwise.
+        This undergoes URL decoding and will always be a string.
+        """
+        rv = self._split_auth()[0]
+        if rv is not None:
+            return _url_unquote_legacy(rv)
+        return None
+
+    @property
+    def raw_username(self) -> str | None:
+        """The username if it was part of the URL, `None` otherwise.
+        Unlike :attr:`username` this one is not being decoded.
+        """
+        return self._split_auth()[0]
+
+    @property
+    def password(self) -> str | None:
+        """The password if it was part of the URL, `None` otherwise.
+        This undergoes URL decoding and will always be a string.
+        """
+        rv = self._split_auth()[1]
+        if rv is not None:
+            return _url_unquote_legacy(rv)
+        return None
+
+    @property
+    def raw_password(self) -> str | None:
+        """The password if it was part of the URL, `None` otherwise.
+        Unlike :attr:`password` this one is not being decoded.
+        """
+        return self._split_auth()[1]
+
+    def decode_query(self, *args: t.Any, **kwargs: t.Any) -> ds.MultiDict[str, str]:
+        """Decodes the query part of the URL.  Ths is a shortcut for
+        calling :func:`url_decode` on the query argument.  The arguments and
+        keyword arguments are forwarded to :func:`url_decode` unchanged.
+        """
+        return url_decode(self.query, *args, **kwargs)
+
+    def join(self, *args: t.Any, **kwargs: t.Any) -> BaseURL:
+        """Joins this URL with another one.  This is just a convenience
+        function for calling into :meth:`url_join` and then parsing the
+        return value again.
+        """
+        return url_parse(url_join(self, *args, **kwargs))
+
+    def to_url(self) -> str:
+        """Returns a URL string or bytes depending on the type of the
+        information stored.  This is just a convenience function
+        for calling :meth:`url_unparse` for this URL.
+        """
+        return url_unparse(self)
+
+    def encode_netloc(self) -> str:
+        """Encodes the netloc part to an ASCII safe URL as bytes."""
+        rv = self.ascii_host or ""
+        if ":" in rv:
+            rv = f"[{rv}]"
+        port = self.port
+        if port is not None:
+            rv = f"{rv}:{port}"
+        auth = ":".join(
+            filter(
+                None,
+                [
+                    url_quote(self.raw_username or "", "utf-8", "strict", "/:%"),
+                    url_quote(self.raw_password or "", "utf-8", "strict", "/:%"),
+                ],
+            )
+        )
+        if auth:
+            rv = f"{auth}@{rv}"
+        return rv
+
+    def decode_netloc(self) -> str:
+        """Decodes the netloc part into a string."""
+        host = self.host or ""
+
+        if isinstance(host, bytes):
+            host = host.decode()
+
+        rv = _decode_idna(host)
+
+        if ":" in rv:
+            rv = f"[{rv}]"
+        port = self.port
+        if port is not None:
+            rv = f"{rv}:{port}"
+        auth = ":".join(
+            filter(
+                None,
+                [
+                    _url_unquote_legacy(self.raw_username or "", "/:%@"),
+                    _url_unquote_legacy(self.raw_password or "", "/:%@"),
+                ],
+            )
+        )
+        if auth:
+            rv = f"{auth}@{rv}"
+        return rv
+
+    def get_file_location(
+        self, pathformat: str | None = None
+    ) -> tuple[str | None, str | None]:
+        """Returns a tuple with the location of the file in the form
+        ``(server, location)``.  If the netloc is empty in the URL or
+        points to localhost, it's represented as ``None``.
+
+        The `pathformat` by default is autodetection but needs to be set
+        when working with URLs of a specific system.  The supported values
+        are ``'windows'`` when working with Windows or DOS paths and
+        ``'posix'`` when working with posix paths.
+
+        If the URL does not point to a local file, the server and location
+        are both represented as ``None``.
+
+        :param pathformat: The expected format of the path component.
+                           Currently ``'windows'`` and ``'posix'`` are
+                           supported.  Defaults to ``None`` which is
+                           autodetect.
+        """
+        if self.scheme != "file":
+            return None, None
+
+        path = url_unquote(self.path)
+        host = self.netloc or None
+
+        if pathformat is None:
+            if os.name == "nt":
+                pathformat = "windows"
+            else:
+                pathformat = "posix"
+
+        if pathformat == "windows":
+            if path[:1] == "/" and path[1:2].isalpha() and path[2:3] in "|:":
+                path = f"{path[1:2]}:{path[3:]}"
+            windows_share = path[:3] in ("\\" * 3, "/" * 3)
+            import ntpath
+
+            path = ntpath.normpath(path)
+            # Windows shared drives are represented as ``\\host\\directory``.
+            # That results in a URL like ``file://///host/directory``, and a
+            # path like ``///host/directory``. We need to special-case this
+            # because the path contains the hostname.
+            if windows_share and host is None:
+                parts = path.lstrip("\\").split("\\", 1)
+                if len(parts) == 2:
+                    host, path = parts
+                else:
+                    host = parts[0]
+                    path = ""
+        elif pathformat == "posix":
+            import posixpath
+
+            path = posixpath.normpath(path)
+        else:
+            raise TypeError(f"Invalid path format {pathformat!r}")
+
+        if host in ("127.0.0.1", "::1", "localhost"):
+            host = None
+
+        return host, path
+
+    def _split_netloc(self) -> tuple[str | None, str]:
+        if self._at in self.netloc:
+            auth, _, netloc = self.netloc.partition(self._at)
+            return auth, netloc
+        return None, self.netloc
+
+    def _split_auth(self) -> tuple[str | None, str | None]:
+        auth = self._split_netloc()[0]
+        if not auth:
+            return None, None
+        if self._colon not in auth:
+            return auth, None
+
+        username, _, password = auth.partition(self._colon)
+        return username, password
+
+    def _split_host(self) -> tuple[str | None, str | None]:
+        rv = self._split_netloc()[1]
+        if not rv:
+            return None, None
+
+        if not rv.startswith(self._lbracket):
+            if self._colon in rv:
+                host, _, port = rv.partition(self._colon)
+                return host, port
+            return rv, None
+
+        idx = rv.find(self._rbracket)
+        if idx < 0:
+            return rv, None
+
+        host = rv[1:idx]
+        rest = rv[idx + 1 :]
+        if rest.startswith(self._colon):
+            return host, rest[1:]
+        return host, None
+
+class BytesURL(BaseURL):
+    """Represents a parsed URL in bytes.
+
+    .. deprecated:: 2.3
+        Will be removed in Werkzeug 2.4. Use the ``urllib.parse`` library instead.
+    """
+
+    __slots__ = ()
+    _at = b"@"  # type: ignore
+    _colon = b":"  # type: ignore
+    _lbracket = b"["  # type: ignore
+    _rbracket = b"]"  # type: ignore
+
+    def __str__(self) -> str:
+        return self.to_url().decode("utf-8", "replace")  # type: ignore
+
+    def encode_netloc(self) -> bytes:  # type: ignore
+        """Returns the netloc unchanged as bytes."""
+        return self.netloc  # type: ignore
+
+    def decode(self, charset: str = "utf-8", errors: str = "replace") -> URL:
+        """Decodes the URL to a tuple made out of strings.  The charset is
+        only being used for the path, query and fragment.
+        """
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", "'werkzeug", DeprecationWarning)
+            return URL(
+                self.scheme.decode("ascii"),  # type: ignore
+                self.decode_netloc(),
+                self.path.decode(charset, errors),  # type: ignore
+                self.query.decode(charset, errors),  # type: ignore
+                self.fragment.decode(charset, errors),  # type: ignore
+            )
 
 class URL(BaseURL):
     """Represents a parsed URL.  This behaves like a regular tuple but
@@ -132,39 +384,197 @@ class URL(BaseURL):
                 self.fragment.encode(charset, errors),
             )
 
-def url_unparse(components: tuple[str, str, str, str, str]) -> str:
-    """The reverse operation to :meth:`url_parse`.  This accepts arbitrary
-    as well as :class:`URL` tuples and returns a URL as a string.
 
-    :param components: the parsed URL as tuple which should be converted
-                       into a URL string.
+def _to_str(
+    x: t.Optional[t.Any],
+    charset: t.Optional[str] = _default_encoding,
+    errors: str = "strict",
+    allow_none_charset: bool = False,
+):
+    if x is None or isinstance(x, str):
+        return x
+
+    if not isinstance(x, (bytes, bytearray)):
+        return str(x)
+
+    if charset is None:
+        if allow_none_charset:
+            return x
+
+    return x.decode(charset, errors)  # type: ignore
+
+def _make_fast_url_quote(
+    charset: str = "utf-8",
+    errors: str = "strict",
+    safe: str | bytes = "/:",
+    unsafe: str | bytes = "",
+) -> t.Callable[[bytes], str]:
+    """Precompile the translation table for a URL encoding function.
+
+    Unlike :func:`url_quote`, the generated function only takes the
+    string to quote.
+
+    :param charset: The charset to encode the result with.
+    :param errors: How to handle encoding errors.
+    :param safe: An optional sequence of safe characters to never encode.
+    :param unsafe: An optional sequence of unsafe characters to always encode.
+    """
+    if isinstance(safe, str):
+        safe = safe.encode(charset, errors)
+
+    if isinstance(unsafe, str):
+        unsafe = unsafe.encode(charset, errors)
+
+    safe = (frozenset(bytearray(safe)) | _always_safe) - frozenset(bytearray(unsafe))
+    table = [chr(c) if c in safe else f"%{c:02X}" for c in range(256)]
+
+    def quote(string: bytes) -> str:
+        return "".join([table[c] for c in string])
+
+    return quote
+
+
+_fast_quote_plus = _make_fast_url_quote(safe=" ", unsafe="+")
+
+
+def _fast_url_quote_plus(string: bytes) -> str:
+    return _fast_quote_plus(string).replace(" ", "+")
+
+def _url_encode_impl(
+    obj: t.Mapping[str, str] | t.Iterable[tuple[str, str]],
+    charset: str,
+    sort: bool,
+    key: t.Callable[[tuple[str, str]], t.Any] | None,
+) -> t.Iterator[str]:
+    from werkzeug.datastructures import iter_multi_items
+
+    iterable: t.Iterable[tuple[str, str]] = iter_multi_items(obj)
+
+    if sort:
+        iterable = sorted(iterable, key=key)
+
+    for key_str, value_str in iterable:
+        if value_str is None:
+            continue
+
+        if not isinstance(key_str, bytes):
+            key_bytes = str(key_str).encode(charset)
+        else:
+            key_bytes = key_str
+
+        if not isinstance(value_str, bytes):
+            value_bytes = str(value_str).encode(charset)
+        else:
+            value_bytes = value_str
+
+        yield f"{_fast_url_quote_plus(key_bytes)}={_fast_url_quote_plus(value_bytes)}"
+
+def url_encode(
+    obj: t.Mapping[str, str] | t.Iterable[tuple[str, str]],
+    charset: str = "utf-8",
+    sort: bool = False,
+    key: t.Callable[[tuple[str, str]], t.Any] | None = None,
+    separator: str = "&",
+) -> str:
+    """URL encode a dict/`MultiDict`.  If a value is `None` it will not appear
+    in the result string.  Per default only values are encoded into the target
+    charset strings.
+
+    :param obj: the object to encode into a query string.
+    :param charset: the charset of the query string.
+    :param sort: set to `True` if you want parameters to be sorted by `key`.
+    :param separator: the separator to be used for the pairs.
+    :param key: an optional function to be used for sorting.  For more details
+                check out the :func:`sorted` documentation.
 
     .. deprecated:: 2.3
-        Will be removed in Werkzeug 2.4. Use ``urllib.parse.urlunsplit`` instead.
+        Will be removed in Werkzeug 2.4. Use ``urllib.parse.urlencode`` instead.
+
+    .. versionchanged:: 2.1
+        The ``encode_keys`` parameter was removed.
+
+    .. versionchanged:: 0.5
+        Added the ``sort``, ``key``, and ``separator`` parameters.
     """
+    separator = _to_str(separator, "ascii")
+    return separator.join(_url_encode_impl(obj, charset, sort, key))
 
-    _check_str_tuple(components)
-    scheme, netloc, path, query, fragment = components
-    s = _make_encode_wrapper(scheme)
-    url = s("")
 
-    # We generally treat file:///x and file:/x the same which is also
-    # what browsers seem to do.  This also allows us to ignore a schema
-    # register for netloc utilization or having to differentiate between
-    # empty and missing netloc.
-    if netloc or (scheme and path.startswith(s("/"))):
-        if path and path[:1] != s("/"):
-            path = s("/") + path
-        url = s("//") + (netloc or s("")) + path
-    elif path:
-        url += path
-    if scheme:
-        url = scheme + s(":") + url
-    if query:
-        url = url + s("?") + query
-    if fragment:
-        url = url + s("#") + fragment
-    return url
+def _check_str_tuple(value: t.Tuple[t.AnyStr, ...]) -> None:
+    """Ensure tuple items are all strings or all bytes."""
+    if not value:
+        return
+
+    item_type = str if isinstance(value[0], str) else bytes
+
+    if any(not isinstance(item, item_type) for item in value):
+        raise TypeError(f"Cannot mix str and bytes arguments (got {value!r})")
+
+def _make_encode_wrapper(reference: t.AnyStr) -> t.Callable[[str], t.AnyStr]:
+    """Create a function that will be called with a string argument. If
+    the reference is bytes, values will be encoded to bytes.
+    """
+    if isinstance(reference, str):
+        return lambda x: x
+
+    return operator.methodcaller("encode", "latin1")
+
+
+_unquote_maps: dict[frozenset[int], dict[bytes, int]] = {frozenset(): _hextobyte}
+
+
+def _unquote_to_bytes(string: str | bytes, unsafe: str | bytes = "") -> bytes:
+    if isinstance(string, str):
+        string = string.encode("utf-8")
+
+    if isinstance(unsafe, str):
+        unsafe = unsafe.encode("utf-8")
+
+    unsafe = frozenset(bytearray(unsafe))
+    groups = iter(string.split(b"%"))
+    result = bytearray(next(groups, b""))
+
+    try:
+        hex_to_byte = _unquote_maps[unsafe]
+    except KeyError:
+        hex_to_byte = _unquote_maps[unsafe] = {
+            h: b for h, b in _hextobyte.items() if b not in unsafe
+        }
+
+    for group in groups:
+        code = group[:2]
+
+        if code in hex_to_byte:
+            result.append(hex_to_byte[code])
+            result.extend(group[2:])
+        else:
+            result.append(37)  # %
+            result.extend(group)
+
+    return bytes(result)
+
+def url_unquote(
+    s: str | bytes,
+    charset: str = "utf-8",
+    errors: str = "replace",
+    unsafe: str = "",
+) -> str:
+    """URL decode a single string with a given encoding.  If the charset
+    is set to `None` no decoding is performed and raw bytes are
+    returned.
+
+    :param s: the string to unquote.
+    :param charset: the charset of the query string.  If set to `None`
+        no decoding will take place.
+    :param errors: the error handling for the charset decoding.
+
+    .. deprecated:: 2.3
+        Will be removed in Werkzeug 2.4. Use ``urllib.parse.unquote`` instead.
+    """
+    rv = _unquote_to_bytes(s, unsafe)
+    if charset is None:
+        return rv
+    return rv.decode(charset, errors)
 
 def url_unquote_plus(
     s: str | bytes, charset: str = "utf-8", errors: str = "replace"
@@ -192,46 +602,72 @@ def url_unquote_plus(
         warnings.filterwarnings("ignore", "'werkzeug", DeprecationWarning)
         return url_unquote(s, charset, errors)
 
-def url_quote_plus(
-    string: str, charset: str = "utf-8", errors: str = "strict", safe: str = ""
-) -> str:
-    """URL encode a single string with the given encoding and convert
-    whitespace to "+".
+def _url_decode_impl(
+    pair_iter: t.Iterable[t.AnyStr], charset: str, include_empty: bool, errors: str
+) -> t.Iterator[tuple[str, str]]:
+    for pair in pair_iter:
+        if not pair:
+            continue
+        s = _make_encode_wrapper(pair)
+        equal = s("=")
+        if equal in pair:
+            key, value = pair.split(equal, 1)
+        else:
+            if not include_empty:
+                continue
+            key = pair
+            value = s("")
+        yield (
+            url_unquote_plus(key, charset, errors),
+            url_unquote_plus(value, charset, errors),
+        )
 
-    :param s: The string to quote.
-    :param charset: The charset to be used.
-    :param safe: An optional sequence of safe characters.
-
-    .. deprecated:: 2.3
-        Will be removed in Werkzeug 2.4. Use ``urllib.parse.quote_plus`` instead.
-    """
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", "'werkzeug", DeprecationWarning)
-        return url_quote(string, charset, errors, safe + " ", "+").replace(" ", "+")
-
-def url_unquote(
-    s: str | bytes,
+def url_decode(
+    s: t.AnyStr,
     charset: str = "utf-8",
+    include_empty: bool = True,
     errors: str = "replace",
-    unsafe: str = "",
-) -> str:
-    """URL decode a single string with a given encoding.  If the charset
-    is set to `None` no decoding is performed and raw bytes are
-    returned.
+    separator: str = "&",
+    cls: type[ds.MultiDict] | None = None,
+) -> ds.MultiDict[str, str]:
+    """Parse a query string and return it as a :class:`MultiDict`.
 
-    :param s: the string to unquote.
-    :param charset: the charset of the query string.  If set to `None`
-        no decoding will take place.
-    :param errors: the error handling for the charset decoding.
+    :param s: The query string to parse.
+    :param charset: Decode bytes to string with this charset. If not
+        given, bytes are returned as-is.
+    :param include_empty: Include keys with empty values in the dict.
+    :param errors: Error handling behavior when decoding bytes.
+    :param separator: Separator character between pairs.
+    :param cls: Container to hold result instead of :class:`MultiDict`.
 
     .. deprecated:: 2.3
-        Will be removed in Werkzeug 2.4. Use ``urllib.parse.unquote`` instead.
+        Will be removed in Werkzeug 2.4. Use ``urllib.parse.parse_qs`` instead.
+
+    .. versionchanged:: 2.1
+        The ``decode_keys`` parameter was removed.
+
+    .. versionchanged:: 0.5
+        In previous versions ";" and "&" could be used for url decoding.
+        Now only "&" is supported. If you want to use ";", a different
+        ``separator`` can be provided.
+
+    .. versionchanged:: 0.5
+        The ``cls`` parameter was added.
     """
-    rv = _unquote_to_bytes(s, unsafe)
-    if charset is None:
-        return rv
-    return rv.decode(charset, errors)
+    if cls is None:
+        from werkzeug.datastructures import MultiDict  # noqa: F811
+
+        cls = MultiDict
+    if isinstance(s, str) and not isinstance(separator, str):
+        separator = separator.decode(charset or "ascii")
+    elif isinstance(s, bytes) and not isinstance(separator, bytes):
+        separator = separator.encode(charset or "ascii")  # type: ignore
+    return cls(
+        _url_decode_impl(
+            s.split(separator), charset, include_empty, errors  # type: ignore
+        )
+    )
+
 
 def url_quote(
     string: str | bytes,
@@ -270,6 +706,24 @@ def url_quote(
         else:
             rv.extend(_bytetohex[char])
     return bytes(rv).decode(charset)
+
+def url_quote_plus(
+    string: str, charset: str = "utf-8", errors: str = "strict", safe: str = ""
+) -> str:
+    """URL encode a single string with the given encoding and convert
+    whitespace to "+".
+
+    :param s: The string to quote.
+    :param charset: The charset to be used.
+    :param safe: An optional sequence of safe characters.
+
+    .. deprecated:: 2.3
+        Will be removed in Werkzeug 2.4. Use ``urllib.parse.quote_plus`` instead.
+    """
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", "'werkzeug", DeprecationWarning)
+        return url_quote(string, charset, errors, safe + " ", "+").replace(" ", "+")
 
 def url_parse(
     url: str, scheme: str | None = None, allow_fragments: bool = True
@@ -326,6 +780,42 @@ def url_parse(
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", "'werkzeug", DeprecationWarning)
         return result_type(scheme, netloc, url, query, fragment)
+
+
+def url_unparse(components: tuple[str, str, str, str, str]) -> str:
+    """The reverse operation to :meth:`url_parse`.  This accepts arbitrary
+    as well as :class:`URL` tuples and returns a URL as a string.
+
+    :param components: the parsed URL as tuple which should be converted
+                       into a URL string.
+
+    .. deprecated:: 2.3
+        Will be removed in Werkzeug 2.4. Use ``urllib.parse.urlunsplit`` instead.
+    """
+
+    _check_str_tuple(components)
+    scheme, netloc, path, query, fragment = components
+    s = _make_encode_wrapper(scheme)
+    url = s("")
+
+    # We generally treat file:///x and file:/x the same which is also
+    # what browsers seem to do.  This also allows us to ignore a schema
+    # register for netloc utilization or having to differentiate between
+    # empty and missing netloc.
+    if netloc or (scheme and path.startswith(s("/"))):
+        if path and path[:1] != s("/"):
+            path = s("/") + path
+        url = s("//") + (netloc or s("")) + path
+    elif path:
+        url += path
+    if scheme:
+        url = scheme + s(":") + url
+    if query:
+        url = url + s("?") + query
+    if fragment:
+        url = url + s("#") + fragment
+    return url
+
 
 def url_join(
     base: str | tuple[str, str, str, str, str],
@@ -400,78 +890,37 @@ def url_join(
     path = s("/").join(segments)
     return url_unparse((scheme, netloc, path, query, fragment))
 
-def url_encode(
-    obj: t.Mapping[str, str] | t.Iterable[tuple[str, str]],
-    charset: str = "utf-8",
-    sort: bool = False,
-    key: t.Callable[[tuple[str, str]], t.Any] | None = None,
-    separator: str = "&",
-) -> str:
-    """URL encode a dict/`MultiDict`.  If a value is `None` it will not appear
-    in the result string.  Per default only values are encoded into the target
-    charset strings.
+def patch_werkzeug():
+    from ..tools.json import scriptsafe  # noqa: PLC0415
+    Request.json_module = Response.json_module = scriptsafe
 
-    :param obj: the object to encode into a query string.
-    :param charset: the charset of the query string.
-    :param sort: set to `True` if you want parameters to be sorted by `key`.
-    :param separator: the separator to be used for the pairs.
-    :param key: an optional function to be used for sorting.  For more details
-                check out the :func:`sorted` documentation.
+    FileStorage.save = lambda self, dst, buffer_size=(1 << 20): copyfileobj(self.stream, dst, buffer_size)
 
-    .. deprecated:: 2.3
-        Will be removed in Werkzeug 2.4. Use ``urllib.parse.urlencode`` instead.
+    def _multidict_deepcopy(self, memo=None):
+        return orig_deepcopy(self)
 
-    .. versionchanged:: 2.1
-        The ``encode_keys`` parameter was removed.
+    orig_deepcopy = MultiDict.deepcopy
+    MultiDict.deepcopy = _multidict_deepcopy
 
-    .. versionchanged:: 0.5
-        Added the ``sort``, ``key``, and ``separator`` parameters.
-    """
-    separator = _to_str(separator, "ascii")
-    return separator.join(_url_encode_impl(obj, charset, sort, key))
+    if Rule_get_func_code:
+        @staticmethod
+        def _get_func_code(code, name):
+            assert isinstance(code, CodeType)
+            return Rule_get_func_code(code, name)
+        Rule._get_func_code = _get_func_code
 
-def url_decode(
-    s: t.AnyStr,
-    charset: str = "utf-8",
-    include_empty: bool = True,
-    errors: str = "replace",
-    separator: str = "&",
-    cls: type[ds.MultiDict] | None = None,
-) -> ds.MultiDict[str, str]:
-    """Parse a query string and return it as a :class:`MultiDict`.
-
-    :param s: The query string to parse.
-    :param charset: Decode bytes to string with this charset. If not
-        given, bytes are returned as-is.
-    :param include_empty: Include keys with empty values in the dict.
-    :param errors: Error handling behavior when decoding bytes.
-    :param separator: Separator character between pairs.
-    :param cls: Container to hold result instead of :class:`MultiDict`.
-
-    .. deprecated:: 2.3
-        Will be removed in Werkzeug 2.4. Use ``urllib.parse.parse_qs`` instead.
-
-    .. versionchanged:: 2.1
-        The ``decode_keys`` parameter was removed.
-
-    .. versionchanged:: 0.5
-        In previous versions ";" and "&" could be used for url decoding.
-        Now only "&" is supported. If you want to use ";", a different
-        ``separator`` can be provided.
-
-    .. versionchanged:: 0.5
-        The ``cls`` parameter was added.
-    """
-    if cls is None:
-        from werkzeug.datastructures import MultiDict  # noqa: F811
-
-        cls = MultiDict
-    if isinstance(s, str) and not isinstance(separator, str):
-        separator = separator.decode(charset or "ascii")
-    elif isinstance(s, bytes) and not isinstance(separator, bytes):
-        separator = separator.encode(charset or "ascii")  # type: ignore
-    return cls(
-        _url_decode_impl(
-            s.split(separator), charset, include_empty, errors  # type: ignore
-        )
-    )
+    if hasattr(urls, 'url_join'):
+        # URLs are already patched
+        return
+    # see https://github.com/pallets/werkzeug/compare/2.3.0..3.0.0
+    # see https://github.com/pallets/werkzeug/blob/2.3.0/src/werkzeug/urls.py for replacement
+    urls.url_decode = url_decode
+    urls.url_encode = url_encode
+    urls.url_join = url_join
+    urls.url_parse = url_parse
+    urls.url_quote = url_quote
+    urls.url_unquote = url_unquote
+    urls.url_quote_plus = url_quote_plus
+    urls.url_unquote_plus = url_unquote_plus
+    urls.url_unparse = url_unparse
+    urls.URL = URL

@@ -9,6 +9,7 @@ import sys
 
 inphms.evented = False
 
+
 def patch_evented():
     if inphms.evented or not (len(sys.argv) > 1 and sys.argv[1] == 'gevent'):
         return

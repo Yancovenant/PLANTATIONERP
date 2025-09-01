@@ -13,8 +13,8 @@ def patch_all():
     patch_evented()
     set_timezone_utc()
 
-    # from .codecs import patch_codecs
-    # patch_codecs()
+    from .codecs import patch_codecs
+    patch_codecs()
     # from .email import patch_email
     # patch_email()
     # from .mimetypes import patch_mimetypes
@@ -29,8 +29,8 @@ def patch_all():
     # patch_num2words()
     # from .stdnum import patch_stdnum
     # patch_stdnum()
-    # from .urllib3 import patch_urllib3
-    # patch_urllib3()
+    from .urllib3 import patch_urllib3
+    patch_urllib3()
     from .werkzeug_urls import patch_werkzeug
     patch_werkzeug()
     # from .zeep import patch_zeep
