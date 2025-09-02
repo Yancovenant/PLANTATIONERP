@@ -4,7 +4,7 @@
 from setuptools import setup, find_packages
 from os.path import join, dirname
 
-exec(open(join(dirname(__file__), 'inphms', 'release.py'), 'rb').read())
+exec(open(join(dirname(__file__), 'inphms', 'release.py'), 'rb').read()) # Load release variables from release.py
 lib_name = 'inphms'
 
 setup(
@@ -29,7 +29,7 @@ setup(
         # 'cryptography',
         'decorator',
         # 'docutils',
-        # 'geoip2',
+        'geoip2',
         # 'gevent',
         # 'greenlet',
         # 'idna',
@@ -38,7 +38,7 @@ setup(
         # 'libsass',
         'MarkupSafe',
         # 'num2words',
-        # 'ofxparse',
+        'ofxparse',
         # 'openpyxl',
         'passlib',
         # 'pillow',  # windows binary http://www.lfd.uci.edu/~gohlke/pythonlibs/

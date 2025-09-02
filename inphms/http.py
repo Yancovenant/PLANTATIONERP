@@ -19,6 +19,74 @@ the attached function descriptions will help you understand this module.
 
 Here be dragons:
 
+    Application.__call__
+        if path is like '/<module>/static/<path>':
+            Request._serve_static
+
+        elif not request.db:
+            Request._serve_nodb
+                App.nodb_routing_map.match
+                Dispatcher.pre_dispatch
+                Dispatcher.dispatch
+                    route_wrapper
+                        endpoint
+                Dispatcher.post_dispatch
+
+        else:
+            Request._serve_db
+                env['ir.http']._match
+
+                if not match:
+                    Request._transactioning
+                        model.retrying
+                            env['ir.http']._serve_fallback
+                            env['ir.http']._post_dispatch
+                else:
+                    Request._transactioning
+                        model.retrying
+                            env['ir.http']._authenticate
+                            env['ir.http']._pre_dispatch
+                            Dispatcher.pre_dispatch
+                            Dispatcher.dispatch
+                                env['ir.http']._dispatch
+                                    route_wrapper
+                                        endpoint
+                            env['ir.http']._post_dispatch
+
+Application.__call__
+  WSGI entry point, it sanitizes the request, it wraps it in a werkzeug
+  request and itself in an Inphms http request. The Inphms http request is
+  exposed at ``http.request`` then it is forwarded to either
+  ``_serve_static``, ``_serve_nodb`` or ``_serve_db`` depending on the
+  request path and the presence of a database. It is also responsible of
+  ensuring any error is properly logged and encapsuled in a HTTP error
+  response.
+
+Request._serve_static
+  Handle all requests to ``/<module>/static/<asset>`` paths, open the
+  underlying file on the filesystem and stream it via
+  :meth:``Request.send_file``
+
+Request._serve_nodb
+  Handle requests to ``@route(auth='none')`` endpoints when the user is
+  not connected to a database. It performs limited operations, just
+  matching the auth='none' endpoint using the request path and then it
+  delegates to Dispatcher.
+
+Request._serve_db
+  Handle all requests that are not static when it is possible to connect
+  to a database. It opens a registry on the database and then delegates
+  most of the effort the the ``ir.http`` abstract model. This model acts
+  as a module-aware middleware, its implementation in ``base`` is merely
+  more than just delegating to Dispatcher.
+
+
+route_wrapper, closure of the http.route decorator
+  Sanitize the request parameters, call the route endpoint and
+  optionally coerce the endpoint result.
+
+endpoint
+  The @route(...) decorated controller method.
 """
 
 import base64
@@ -91,9 +159,12 @@ from .exceptions import UserError, AccessError, AccessDenied
 from .modules.module import get_manifest
 from .modules.registry import Registry
 from .service import security, model as service_model
+# from .tools import (config, consteq, file_path, get_lang, json_default,
+#                     parse_version, profiler, unique, exception_to_unicode)
 from .tools import (
     parse_version, config, file_path,
-    profiler, unique, consteq
+    profiler, unique, consteq,
+    get_lang
 )
 from .tools.func import lazy_property, filter_kwargs
 from .tools.misc import submap
@@ -145,27 +216,27 @@ if geoip2:
 JSON_MIMETYPES = ('application/json', 'application/json-rpc')
 
 MISSING_CSRF_WARNING = """\
-No CSRF validation token provided for path %r
+    No CSRF validation token provided for path %r
 
-Inphms URLs are CSRF-protected by default (when accessed with unsafe
-HTTP methods). See
-https://www.inphms.com/documentation/master/developer/reference/addons/http.html#csrf
-for more details.
+    Inphms URLs are CSRF-protected by default (when accessed with unsafe
+    HTTP methods). See
+    https://www.inphms.com/documentation/master/developer/reference/addons/http.html#csrf
+    for more details.
 
-* if this endpoint is accessed through Inphms via py-QWeb form, embed a CSRF
-  token in the form, Tokens are available via `request.csrf_token()`
-  can be provided through a hidden input and must be POST-ed named
-  `csrf_token` e.g. in your form add:
-      <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+    * if this endpoint is accessed through Inphms via py-QWeb form, embed a CSRF
+    token in the form, Tokens are available via `request.csrf_token()`
+    can be provided through a hidden input and must be POST-ed named
+    `csrf_token` e.g. in your form add:
+        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
 
-* if the form is generated or posted in javascript, the token value is
-  available as `csrf_token` on `web.core` and as the `csrf_token`
-  value in the default js-qweb execution context
+    * if the form is generated or posted in javascript, the token value is
+    available as `csrf_token` on `web.core` and as the `csrf_token`
+    value in the default js-qweb execution context
 
-* if the form is accessed by an external third party (e.g. REST API
-  endpoint, payment gateway callback) you will need to disable CSRF
-  protection (and implement your own protection if necessary) by
-  passing the `csrf=False` parameter to the `route` decorator.
+    * if the form is accessed by an external third party (e.g. REST API
+    endpoint, payment gateway callback) you will need to disable CSRF
+    protection (and implement your own protection if necessary) by
+    passing the `csrf=False` parameter to the `route` decorator.
 """
 
 # The @route arguments to propagate from the decorated method to the
@@ -226,22 +297,6 @@ def content_disposition(filename, disposition_type='attachment'):
     )
 
 
-def db_list(force=False, host=None): #ichecked
-    """
-    Get the list of available databases.
-
-    :param bool force: See :func:`~inphms.service.db.list_dbs`:
-    :param host: The Host used to replace %h and %d in the dbfilters
-        regexp. Taken from the current request when omitted.
-    :returns: the list of available databases
-    :rtype: List[str]
-    """
-    try:
-        dbs = inphms.service.db.list_dbs(force)
-    except psycopg2.OperationalError:
-        return []
-    return db_filter(dbs, host)
-
 def db_filter(dbs, host=None): #ichecked
     """
     Return the subset of ``dbs`` that match the dbfilter or the dbname
@@ -281,6 +336,23 @@ def db_filter(dbs, host=None): #ichecked
 
     return list(dbs)
 
+def db_list(force=False, host=None): #ichecked
+    """
+    Get the list of available databases.
+
+    :param bool force: See :func:`~inphms.service.db.list_dbs`:
+    :param host: The Host used to replace %h and %d in the dbfilters
+        regexp. Taken from the current request when omitted.
+    :returns: the list of available databases
+    :rtype: List[str]
+    """
+    try:
+        dbs = inphms.service.db.list_dbs(force)
+    except psycopg2.OperationalError:
+        return []
+    return db_filter(dbs, host)
+
+
 def is_cors_preflight(request, endpoint): #ichecked
     return request.httprequest.method == 'OPTIONS' and endpoint.routing.get('cors', False)
 
@@ -295,6 +367,269 @@ def get_session_max_inactivity(env):
     except ValueError:
         _logger.warning("Invalid value for 'sessions.max_inactivity_seconds', using default value.")
         return SESSION_LIFETIME
+
+# =========================================================
+# Controller and routes
+# =========================================================
+
+class Controller(object):
+    """
+    Class mixin that provide module controllers the ability to serve
+    content over http and to be extended in child modules.
+
+    Each class :ref:`inheriting <python:tut-inheritance>` from
+    :class:`~inphms.http.Controller` can use the :func:`~inphms.http.route`:
+    decorator to route matching incoming web requests to decorated
+    methods.
+
+    Like models, controllers can be extended by other modules. The
+    extension mechanism is different because controllers can work in a
+    database-free environment and therefore cannot use
+    :class:~inphms.api.Registry:.
+
+    To *override* a controller, :ref:`inherit <python:tut-inheritance>`
+    from its class, override relevant methods and re-expose them with
+    :func:`~inphms.http.route`:. Please note that the decorators of all
+    methods are combined, if the overriding method’s decorator has no
+    argument all previous ones will be kept, any provided argument will
+    override previously defined ones.
+
+    .. code-block:
+
+        class GreetingController(inphms.http.Controller):
+            @route('/greet', type='http', auth='public')
+            def greeting(self):
+                return 'Hello'
+
+        class UserGreetingController(GreetingController):
+            @route(auth='user')  # override auth, keep path and type
+            def greeting(self):
+                return super().handler()
+    """
+    children_classes = collections.defaultdict(list)  # indexed by module
+
+    @classmethod
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        if Controller in cls.__bases__:
+            path = cls.__module__.split('.')
+            module = path[2] if path[:2] == ['inphms', 'addons'] else ''
+            Controller.children_classes[module].append(cls)
+
+
+def route(route=None, **routing):
+    """
+    Decorate a controller method in order to route incoming requests
+    matching the given URL and options to the decorated method.
+
+    .. warning::
+        It is mandatory to re-decorate any method that is overridden in
+        controller extensions but the arguments can be omitted. See
+        :class:`~inphms.http.Controller` for more details.
+
+    :param Union[str, Iterable[str]] route: The paths that the decorated
+        method is serving. Incoming HTTP request paths matching this
+        route will be routed to this decorated method. See `werkzeug
+        routing documentation <http://werkzeug.pocoo.org/docs/routing/>`_
+        for the format of route expressions.
+    :param str type: The type of request, either ``'json'`` or
+        ``'http'``. It describes where to find the request parameters
+        and how to serialize the response.
+    :param str auth: The authentication method, one of the following:
+
+        * ``'user'``: The user must be authenticated and the current
+          request will be executed using the rights of the user.
+        * ``'bearer'``: The user is authenticated using an "Authorization"
+          request header, using the Bearer scheme with an API token.
+          The request will be executed with the permissions of the
+          corresponding user. If the header is missing, the request
+          must belong to an authentication session, as for the "user"
+          authentication method.
+        * ``'public'``: The user may or may not be authenticated. If he
+          isn't, the current request will be executed using the shared
+          Public user.
+        * ``'none'``: The method is always active, even if there is no
+          database. Mainly used by the framework and authentication
+          modules. The request code will not have any facilities to
+          access the current user.
+    :param Iterable[str] methods: A list of http methods (verbs) this
+        route applies to. If not specified, all methods are allowed.
+    :param str cors: The Access-Control-Allow-Origin cors directive value.
+    :param bool csrf: Whether CSRF protection should be enabled for the
+        route. Enabled by default for ``'http'``-type requests, disabled
+        by default for ``'json'``-type requests.
+    :param Union[bool, Callable[[registry, request], bool]] readonly:
+        Whether this endpoint should open a cursor on a read-only
+        replica instead of (by default) the primary read/write database.
+    :param Callable[[Exception], Response] handle_params_access_error:
+        Implement a custom behavior if an error occurred when retrieving the record
+        from the URL parameters (access error or missing error).
+    """
+    def decorator(endpoint):
+        fname = f"<function {endpoint.__module__}.{endpoint.__name__}>"
+
+        # Sanitize the routing
+        assert routing.get('type', 'http') in _dispatchers.keys()
+        if route:
+            routing['routes'] = [route] if isinstance(route, str) else route
+        wrong = routing.pop('method', None)
+        if wrong is not None:
+            _logger.warning("%s defined with invalid routing parameter 'method', assuming 'methods'", fname)
+            routing['methods'] = wrong
+
+        @functools.wraps(endpoint) # replaces the original function to route_wrapper()
+        def route_wrapper(self, *args, **params):
+            params_ok = filter_kwargs(endpoint, params)
+            params_ko = set(params) - set(params_ok)
+            if params_ko:
+                _logger.warning("%s called ignoring args %s", fname, params_ko)
+
+            result = endpoint(self, *args, **params_ok)
+            if routing['type'] == 'http':  # _generate_routing_rules() ensures type is set
+                return Response.load(result)
+            return result
+
+        route_wrapper.original_routing = routing
+        route_wrapper.original_endpoint = endpoint
+        return route_wrapper
+    return decorator
+
+
+def _check_and_complete_route_definition(controller_cls, submethod, merged_routing): #ichecked
+    """Verify and complete the route definition.
+
+    * Ensure 'type' is defined on each method's own routing.
+    * Ensure overrides don't change the routing type or the read/write mode
+
+    :param submethod: route method
+    :param dict merged_routing: accumulated routing values
+    """
+    default_type = submethod.original_routing.get('type', 'http')
+    routing_type = merged_routing.setdefault('type', default_type)
+    if submethod.original_routing.get('type') not in (None, routing_type):
+        _logger.warning(
+            "The endpoint %s changes the route type, using the original type: %r.",
+            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
+            routing_type)
+    submethod.original_routing['type'] = routing_type
+
+    default_auth = submethod.original_routing.get('auth', merged_routing['auth'])
+    default_mode = submethod.original_routing.get('readonly', default_auth == 'none')
+    parent_readonly = merged_routing.setdefault('readonly', default_mode)
+    child_readonly = submethod.original_routing.get('readonly')
+    if child_readonly not in (None, parent_readonly) and not callable(child_readonly):
+        _logger.warning(
+            "The endpoint %s made the route %s altough its parent was defined as %s. Setting the route read/write.",
+            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
+            'readonly' if child_readonly else 'read/write',
+            'readonly' if parent_readonly else 'read/write',
+        )
+        submethod.original_routing['readonly'] = False
+
+def _generate_routing_rules(modules, nodb_only, converters=None): #ichecked
+    """
+    Two-fold algorithm used to (1) determine which method in the
+    controller inheritance tree should bind to what URL with respect to
+    the list of installed modules and (2) merge the various @route
+    arguments of said method with the @route arguments of the method it
+    overrides.
+    """
+    def is_valid(cls): #ichecked
+        """ Determine if the class is defined in an addon. """
+        path = cls.__module__.split('.')
+        return path[:2] == ['inphms', 'addons'] and path[2] in modules
+
+    def get_leaf_classes(cls): #ichecked
+        """
+        Find the classes that have no child and that have ``cls`` as
+        ancestor.
+        """
+        result = []
+        for subcls in cls.__subclasses__():
+            if is_valid(subcls):
+                result.extend(get_leaf_classes(subcls))
+        if not result and is_valid(cls):
+            result.append(cls)
+        return result
+
+    def build_controllers(): #ichecked
+        """
+        Create dummy controllers that inherit only from the controllers
+        defined at the given ``modules`` (often system wide modules or
+        installed modules). Modules in this context are Inphms addons.
+        """
+        # Controllers defined outside of inphms addons are outside of the
+        # controller inheritance/extension mechanism.
+        yield from (ctrl() for ctrl in Controller.children_classes.get('', []))
+        
+        # Controllers defined inside of inphms addons can be extended in
+        # other installed addons. Rebuild the class inheritance here.
+        highest_controllers = []
+        for module in modules:
+            highest_controllers.extend(Controller.children_classes.get(module, []))
+
+        for top_ctrl in highest_controllers:
+            leaf_controllers = list(unique(get_leaf_classes(top_ctrl)))
+
+            name = top_ctrl.__name__
+            if leaf_controllers != [top_ctrl]:
+                name += ' (extended by %s)' %  ', '.join(
+                    bot_ctrl.__name__
+                    for bot_ctrl in leaf_controllers
+                    if bot_ctrl is not top_ctrl
+                )
+
+            Ctrl = type(name, tuple(reversed(leaf_controllers)), {})
+            yield Ctrl()
+    
+    for ctrl in build_controllers(): #ichecked
+        for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
+            # Skip this method if it is not @route decorated anywhere in
+            # the hierarchy
+            def is_method_a_route(cls):
+                return getattr(getattr(cls, method_name, None), 'original_routing', None) is not None
+            if not any(map(is_method_a_route, type(ctrl).mro())):
+                continue
+
+            merged_routing = {
+                # 'type': 'http',  # set below
+                'auth': 'user',
+                'methods': None,
+                'routes': [],
+            }
+
+            for cls in unique(reversed(type(ctrl).mro()[:-2])):  # ancestors first
+                if method_name not in cls.__dict__:
+                    continue
+                submethod = getattr(cls, method_name)
+
+                if not hasattr(submethod, 'original_routing'):
+                    _logger.warning("The endpoint %s is not decorated by @route(), decorating it myself.", f'{cls.__module__}.{cls.__name__}.{method_name}')
+                    submethod = route()(submethod)
+
+                _check_and_complete_route_definition(cls, submethod, merged_routing)
+
+                merged_routing.update(submethod.original_routing)
+
+            if not merged_routing['routes']:
+                _logger.warning("%s is a controller endpoint without any route, skipping.", f'{cls.__module__}.{cls.__name__}.{method_name}')
+                continue
+
+            if nodb_only and merged_routing['auth'] != "none":
+                continue
+
+            for url in merged_routing['routes']:
+                # duplicates the function (partial) with a copy of the
+                # original __dict__ (update_wrapper) to keep a reference
+                # to `original_routing` and `original_endpoint`, assign
+                # the merged routing ONLY on the duplicated function to
+                # ensure method's immutability.
+                endpoint = functools.partial(method)
+                functools.update_wrapper(endpoint, method)
+                endpoint.routing = merged_routing
+
+                yield (url, endpoint)
+
 
 # =========================================================
 # Session
@@ -380,6 +715,31 @@ class FilesystemSessionStore(sessions.FilesystemSessionStore):
             session.session_token = security.compute_session_token(session, env)
         session.should_rotate = False
         self.save(session)
+    
+    def vacuum(self, max_lifetime=SESSION_LIFETIME):
+        threshold = time.time() - max_lifetime
+        for fname in glob.iglob(os.path.join(root.session_store.path, '*', '*')):
+            path = os.path.join(root.session_store.path, fname)
+            with contextlib.suppress(OSError):
+                if os.path.getmtime(path) < threshold:
+                    os.unlink(path)
+    
+
+    def delete_from_identifiers(self, identifiers):
+        files_to_unlink = []
+        for identifier in identifiers:
+            # Avoid to remove a session if it does not match an identifier.
+            # This prevent malicious user to delete sessions from a different
+            # database by specifying a custom ``res.device.log``.
+            if not _session_identifier_re.match(identifier):
+                continue
+            normalized_path = os.path.normpath(os.path.join(self.path, identifier[:2], identifier + '*'))
+            if normalized_path.startswith(self.path):
+                files_to_unlink.extend(glob.glob(normalized_path))
+        for fn in files_to_unlink:
+            with contextlib.suppress(OSError):
+                os.unlink(fn)
+
 
 class Session(collections.abc.MutableMapping):
     """ Structure containing data persisted across requests. """
@@ -433,6 +793,26 @@ class Session(collections.abc.MutableMapping):
     #
     # Session methods
     #
+    def finalize(self, env):
+        """
+        Finalizes a partial session, should be called on MFA validation
+        to convert a partial / pre-session into a logged-in one.
+        """
+        login = self.pop('pre_login')
+        uid = self.pop('pre_uid')
+
+        env = env(user=uid)
+        user_context = dict(env['res.users'].context_get())
+
+        self.should_rotate = True
+        self.update({
+            'db': env.registry.db_name,
+            'login': login,
+            'uid': uid,
+            'context': user_context,
+            'session_token': env.user._compute_session_token(self.sid),
+        })
+    
     def authenticate(self, dbname, credential):
         """
         Authenticate the current user with the given db, login and
@@ -477,26 +857,6 @@ class Session(collections.abc.MutableMapping):
             request.env.cr.commit()
 
         return auth_info
-
-    def finalize(self, env):
-        """
-        Finalizes a partial session, should be called on MFA validation
-        to convert a partial / pre-session into a logged-in one.
-        """
-        login = self.pop('pre_login')
-        uid = self.pop('pre_uid')
-
-        env = env(user=uid)
-        user_context = dict(env['res.users'].context_get())
-
-        self.should_rotate = True
-        self.update({
-            'db': env.registry.db_name,
-            'login': login,
-            'uid': uid,
-            'context': user_context,
-            'session_token': env.user._compute_session_token(self.sid),
-        })
 
     def logout(self, keep_db=False): #ichecked
         db = self.db if keep_db else get_default_session()['db']  # None
@@ -550,6 +910,115 @@ class Session(collections.abc.MutableMapping):
         self.is_dirty = True
         return new_trace
 
+
+# =========================================================
+# GeoIP
+# =========================================================
+
+class GeoIP(collections.abc.Mapping):
+    """
+    Ip Geolocalization utility, determine information such as the
+    country or the timezone of the user based on their IP Address.
+
+    The instances share the same API as `:class:`geoip2.models.City`
+    <https://geoip2.readthedocs.io/en/latest/#geoip2.models.City>`_.
+
+    When the IP couldn't be geolocalized (missing database, bad address)
+    then an empty object is returned. This empty object can be used like
+    a regular one with the exception that all info are set None.
+
+    :param str ip: The IP Address to geo-localize
+
+    .. note:
+
+        The geoip info the the current request are available at
+        :attr:`~odoo.http.request.geoip`.
+
+    .. code-block:
+
+        >>> GeoIP('127.0.0.1').country.iso_code
+        >>> odoo_ip = socket.gethostbyname('odoo.com')
+        >>> GeoIP(odoo_ip).country.iso_code
+        'FR'
+    """
+
+    def __init__(self, ip):
+        self.ip = ip
+
+    @lazy_property
+    def _city_record(self):
+        try:
+            return root.geoip_city_db.city(self.ip)
+        except (OSError, maxminddb.InvalidDatabaseError):
+            return GEOIP_EMPTY_CITY
+        except geoip2.errors.AddressNotFoundError:
+            return GEOIP_EMPTY_CITY
+
+    @lazy_property
+    def _country_record(self):
+        if '_city_record' in vars(self):
+            # the City class inherits from the Country class and the
+            # city record is in cache already, save a geolocalization
+            return self._city_record
+        try:
+            return root.geoip_country_db.country(self.ip)
+        except (OSError, maxminddb.InvalidDatabaseError):
+            return self._city_record
+        except geoip2.errors.AddressNotFoundError:
+            return GEOIP_EMPTY_COUNTRY
+
+    @property
+    def country_name(self):
+        return self.country.name or self.continent.name
+
+    @property
+    def country_code(self):
+        return self.country.iso_code or self.continent.code
+
+    def __getattr__(self, attr):
+        # Be smart and determine whether the attribute exists on the
+        # country object or on the city object.
+        if hasattr(GEOIP_EMPTY_COUNTRY, attr):
+            return getattr(self._country_record, attr)
+        if hasattr(GEOIP_EMPTY_CITY, attr):
+            return getattr(self._city_record, attr)
+        raise AttributeError(f"{self} has no attribute {attr!r}")
+
+    def __bool__(self):
+        return self.country_name is not None
+
+    # Old dict API, undocumented for now, will be deprecated some day
+    def __getitem__(self, item):
+        if item == 'country_name':
+            return self.country_name
+
+        if item == 'country_code':
+            return self.country_code
+
+        if item == 'city':
+            return self.city.name
+
+        if item == 'latitude':
+            return self.location.latitude
+
+        if item == 'longitude':
+            return self.location.longitude
+
+        if item == 'region':
+            return self.subdivisions[0].iso_code if self.subdivisions else None
+
+        if item == 'time_zone':
+            return self.location.time_zone
+
+        raise KeyError(item)
+
+    def __iter__(self):
+        raise NotImplementedError("The dictionnary GeoIP API is deprecated.")
+
+    def __len__(self):
+        raise NotImplementedError("The dictionnary GeoIP API is deprecated.")
+
+
 # =========================================================
 # Request and Response
 # =========================================================
@@ -566,6 +1035,7 @@ def borrow_request():
         yield req
     finally:
         _request_stack.push(req)
+
 
 def make_request_wrap_methods(attr):
     def getter(self):
@@ -614,6 +1084,247 @@ HTTPREQUEST_ATTRIBUTES = [
 for attr in HTTPREQUEST_ATTRIBUTES:
     setattr(HTTPRequest, attr, property(*make_request_wrap_methods(attr)))
 
+
+class _Response(werkzeug.wrappers.Response):
+    """
+    Outgoing HTTP response with body, status, headers and qweb support.
+    In addition to the :class:`werkzeug.wrappers.Response` parameters,
+    this class's constructor can take the following additional
+    parameters for QWeb Lazy Rendering.
+
+    :param str template: template to render
+    :param dict qcontext: Rendering context to use
+    :param int uid: User id to use for the ir.ui.view render call,
+        ``None`` to use the request's user (the default)
+
+    these attributes are available as parameters on the Response object
+    and can be altered at any time before rendering
+
+    Also exposes all the attributes and methods of
+    :class:`werkzeug.wrappers.Response`.
+    """
+    default_mimetype = 'text/html'
+
+    def __init__(self, *args, **kw): #ichecked
+        template = kw.pop('template', None)
+        qcontext = kw.pop('qcontext', None)
+        uid = kw.pop('uid', None)
+        super().__init__(*args, **kw)
+        self.set_default(template, qcontext, uid)
+    
+    @classmethod
+    def load(cls, result, fname="<function>"): #ichecked
+        """
+        Convert the return value of an endpoint into a Response.
+
+        :param result: The endpoint return value to load the Response from.
+        :type result: Union[Response, werkzeug.wrappers.BaseResponse,
+            werkzeug.exceptions.HTTPException, str, bytes, NoneType]
+        :param str fname: The endpoint function name wherefrom the
+            result emanated, used for logging.
+        :returns: The created :class:`~inphms.http.Response`.
+        :rtype: Response
+        :raises TypeError: When ``result`` type is none of the above-
+            mentioned type.
+        """
+        if isinstance(result, Response):
+            return result
+
+        if isinstance(result, werkzeug.exceptions.HTTPException):
+            _logger.warning("%s returns an HTTPException instead of raising it.", fname)
+            raise result
+
+        if isinstance(result, werkzeug.wrappers.Response):
+            response = cls.force_type(result)
+            response.set_default()
+            return response
+
+        if isinstance(result, (bytes, str, type(None))):
+            return Response(result)
+
+        raise TypeError(f"{fname} returns an invalid value: {result}")
+    
+    def set_default(self, template=None, qcontext=None, uid=None): #ichecked
+        self.template = template
+        self.qcontext = qcontext or dict()
+        self.qcontext['response_template'] = self.template
+        self.uid = uid
+    
+    def render(self):
+        """ Renders the Response's template, returns the result. """
+        self.qcontext['request'] = request
+        return request.env["ir.ui.view"]._render_template(self.template, self.qcontext)
+    
+    def flatten(self):
+        """
+        Forces the rendering of the response's template, sets the result
+        as response body and unsets :attr:`.template`
+        """
+        if self.template:
+            self.response.append(self.render())
+            self.template = None
+    
+    @property
+    def is_qweb(self):
+        return self.template is not None
+    
+    def set_cookie(self, key, value='', max_age=None, expires=-1, path='/', domain=None, secure=False, httponly=False, samesite=None, cookie_type='required'):
+        """
+        The default expires in Werkzeug is None, which means a session cookie.
+        We want to continue to support the session cookie, but not by default.
+        Now the default is arbitrary 1 year.
+        So if you want a cookie of session, you have to explicitly pass expires=None.
+        """
+        if expires == -1:  # not provided value -> default value -> 1 year
+            expires = datetime.now() + timedelta(days=365)
+
+        if request.db and not request.env['ir.http']._is_allowed_cookie(cookie_type):
+            max_age = 0
+        super().set_cookie(key, value=value, max_age=max_age, expires=expires, path=path, domain=domain, secure=secure, httponly=httponly, samesite=samesite)
+
+
+class Headers(Proxy):
+    _wrapped__ = werkzeug.datastructures.Headers
+
+    __getitem__ = ProxyFunc()
+    __repr__ = ProxyFunc(str)
+    __setitem__ = ProxyFunc(None)
+    __str__ = ProxyFunc(str)
+    __contains__ = ProxyFunc(bool)
+    add = ProxyFunc(None)
+    add_header = ProxyFunc(None)
+    clear = ProxyFunc(None)
+    copy = ProxyFunc(lambda v: Headers(v))  # noqa: PLW0108
+    extend = ProxyFunc(None)
+    get = ProxyFunc()
+    get_all = ProxyFunc()
+    getlist = ProxyFunc()
+    items = ProxyFunc()
+    keys = ProxyFunc()
+    pop = ProxyFunc()
+    popitem = ProxyFunc()
+    remove = ProxyFunc(None)
+    set = ProxyFunc(None)
+    setdefault = ProxyFunc()
+    setlist = ProxyFunc(None)
+    setlistdefault = ProxyFunc()
+    to_wsgi_list = ProxyFunc()
+    update = ProxyFunc(None)
+    values = ProxyFunc()
+
+
+class ResponseCacheControl(Proxy):
+    _wrapped__ = werkzeug.datastructures.ResponseCacheControl
+
+    __getitem__ = ProxyFunc()
+    __setitem__ = ProxyFunc(None)
+    immutable = ProxyAttr(bool)
+    max_age = ProxyAttr(int)
+    must_revalidate = ProxyAttr(bool)
+    no_cache = ProxyAttr(bool)
+    no_store = ProxyAttr(bool)
+    no_transform = ProxyAttr(bool)
+    public = ProxyAttr(bool)
+    private = ProxyAttr(bool)
+    proxy_revalidate = ProxyAttr(bool)
+    s_maxage = ProxyAttr(int)
+    pop = ProxyFunc()
+
+class ResponseStream(Proxy):
+    _wrapped__ = werkzeug.wrappers.ResponseStream
+
+    write = ProxyFunc(int)
+    writelines = ProxyFunc(None)
+    tell = ProxyFunc(int)
+
+class Response(Proxy):
+    _wrapped__ = _Response
+
+    # werkzeug.wrappers.Response attributes
+    __call__ = ProxyFunc()
+    add_etag = ProxyFunc(None)
+    age = ProxyAttr()
+    autocorrect_location_header = ProxyAttr(bool)
+    cache_control = ProxyAttr(ResponseCacheControl)
+    call_on_close = ProxyFunc()
+    charset = ProxyAttr(str)
+    content_encoding = ProxyAttr(str)
+    content_length = ProxyAttr(int)
+    content_location = ProxyAttr(str)
+    content_md5 = ProxyAttr(str)
+    content_type = ProxyAttr(str)
+    data = ProxyAttr()
+    default_mimetype = ProxyAttr(str)
+    default_status = ProxyAttr(int)
+    delete_cookie = ProxyFunc(None)
+    direct_passthrough = ProxyAttr(bool)
+    expires = ProxyAttr()
+    force_type = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
+    freeze = ProxyFunc(None)
+    get_data = ProxyFunc()
+    get_etag = ProxyFunc()
+    get_json = ProxyFunc()
+    headers = ProxyAttr(Headers)
+    is_json = ProxyAttr(bool)
+    is_sequence = ProxyAttr(bool)
+    is_streamed = ProxyAttr(bool)
+    iter_encoded = ProxyFunc()
+    json = ProxyAttr()
+    last_modified = ProxyAttr()
+    location = ProxyAttr(str)
+    make_conditional = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
+    make_sequence = ProxyFunc(None)
+    max_cookie_size = ProxyAttr(int)
+    mimetype = ProxyAttr(str)
+    response = ProxyAttr()
+    retry_after = ProxyAttr()
+    set_cookie = ProxyFunc(None)
+    set_data = ProxyFunc(None)
+    set_etag = ProxyFunc(None)
+    status = ProxyAttr(str)
+    status_code = ProxyAttr(int)
+    stream = ProxyAttr(ResponseStream)
+
+    # inphms.http._response attributes
+    load = ProxyFunc()
+    set_default = ProxyFunc(None)
+    qcontext = ProxyAttr()
+    template = ProxyAttr(str)
+    is_qweb = ProxyAttr(bool)
+    render = ProxyFunc()
+    flatten = ProxyFunc(None)
+
+    def __init__(self, *args, **kwargs):
+        response = None
+        if len(args) == 1:
+            arg = args[0]
+            if isinstance(arg, Response):
+                response = arg._wrapped__
+            elif isinstance(arg, _Response):
+                response = arg
+            elif isinstance(arg, werkzeug.wrappers.Response):
+                response = _Response.load(arg)
+        if response is None:
+            response = _Response(*args, **kwargs)
+
+        super().__init__(response)
+        if 'set_cookie' in response.__dict__:
+            self.__dict__['set_cookie'] = response.__dict__['set_cookie']
+
+
+__wz_get_response = HTTPException.get_response
+def get_response(self, environ=None, scope=None):
+    return Response(__wz_get_response(self, environ, scope))
+HTTPException.get_response = get_response
+
+werkzeug_abort = werkzeug.exceptions.abort
+def abort(status, *args, **kwargs): #ichecked
+    if isinstance(status, Response):
+        status = status._wrapped__
+    werkzeug_abort(status, *args, **kwargs)
+werkzeug.exceptions.abort = abort
+
+
 class FutureResponse: #ichecked
     """
     werkzeug.Response mock class that only serves as placeholder for
@@ -639,7 +1350,6 @@ class FutureResponse: #ichecked
     def _charset(self):
         return self.charset
 
-
 class Request:
     """
     Wrapper around the incoming HTTP request with deserialized request
@@ -649,16 +1359,13 @@ class Request:
         self.httprequest = httprequest
         self.future_response = FutureResponse()
         self.dispatcher = _dispatchers['http'](self)  # until we match
-        self.params = {}  # set by the Dispatcher
+        # self.params = {}  # set by the Dispatcher
 
-        # self.geoip = GeoIP(httprequest.remote_addr)
+        self.geoip = GeoIP(httprequest.remote_addr)
         self.registry = None
         self.env = None
-
-    def _post_init(self): #ichecked
-        self.session, self.db = self._get_session_and_dbname()
-        self._post_init = None
     
+
     def _get_session_and_dbname(self): #ichecked
         sid = self.httprequest._session_id__
         if not sid or not root.session_store.is_valid_key(sid):
@@ -689,6 +1396,11 @@ class Request:
 
         session.is_dirty = False
         return session, dbname
+
+    def _post_init(self): #ichecked
+        self.session, self.db = self._get_session_and_dbname()
+        self._post_init = None
+    
     
     def _open_registry(self):
         try:
@@ -739,10 +1451,47 @@ class Request:
         self.env = self.env(cr, user, context, su)
         threading.current_thread().uid = self.env.uid
 
+    @property
+    def uid(self):
+        return self.env.uid
+
+    @uid.setter
+    def uid(self, value):
+        raise NotImplementedError("Use request.update_env instead.")
+
+
+    @property
+    def cr(self):
+        return self.env.cr
+
+    @cr.setter
+    def cr(self, value):
+        if value is None:
+            raise NotImplementedError("Close the cursor instead.")
+        raise ValueError("You cannot replace the cursor attached to the current request.")
+
+    _cr = cr
+
+
+    def update_context(self, **overrides):
+        """
+        Override the environment context of the current request with the
+        values of ``overrides``. To replace the entire context, please
+        use :meth:`~update_env` instead.
+        """
+        self.update_env(context=dict(self.env.context, **overrides))
+
+    @property
+    def context(self):
+        return self.env.context
+
+    @context.setter
+    def context(self, value):
+        raise NotImplementedError("Use request.update_context instead.")
+
     # =====================================================
     # Helpers
     # =====================================================
-    
     def default_lang(self): #ichecked
         """Returns default user language according to request specification
 
@@ -839,6 +1588,30 @@ class Request:
         threading.current_thread().url = httprequest.url
         self.httprequest = httprequest
 
+    def redirect(self, location, code=303, local=True): #ichecked
+        # compatibility, Werkzeug support URL as location
+        if isinstance(location, URL):
+            location = location.to_url()
+        if local:
+            location = '/' + url_parse(location).replace(scheme='', netloc='').to_url().lstrip('/\\')
+        if self.db:
+            return self.env['ir.http']._redirect(location, code)
+        return werkzeug.utils.redirect(location, code, Response=Response)
+
+    def redirect_query(self, location, query=None, code=303, local=True): #ichecked
+        if query:
+            location += '?' + url_encode(query)
+        return self.redirect(location, code=code, local=local)
+    
+
+    def not_found(self, description=None):
+        """ Shortcut for a `HTTP 404
+        <http://tools.ietf.org/html/rfc7231#section-6.5.4>`_ (Not Found)
+        response
+        """
+        return NotFound(description)
+
+
     def validate_csrf(self, csrf): #ichecked
         """
         Is the given csrf token valid ?
@@ -887,21 +1660,6 @@ class Request:
         if sess.is_dirty or cookie_sid != sess.sid:
             self.future_response.set_cookie('session_id', sess.sid, max_age=get_session_max_inactivity(self.env), httponly=True)
 
-    def redirect(self, location, code=303, local=True): #ichecked
-        # compatibility, Werkzeug support URL as location
-        if isinstance(location, URL):
-            location = location.to_url()
-        if local:
-            location = '/' + url_parse(location).replace(scheme='', netloc='').to_url().lstrip('/\\')
-        if self.db:
-            return self.env['ir.http']._redirect(location, code)
-        return werkzeug.utils.redirect(location, code, Response=Response)
-
-    def redirect_query(self, location, query=None, code=303, local=True): #ichecked
-        if query:
-            location += '?' + url_encode(query)
-        return self.redirect(location, code=code, local=local)
-
     # =====================================================
     # Routing
     # =====================================================
@@ -926,6 +1684,19 @@ class Request:
         except OSError:  # cover both missing file and invalid permissions
             raise NotFound(f'File "{path}" not found in module {module}.\n')
     
+    def _serve_nodb(self): #ichecked
+        """
+        Dispatch the request to its matching controller in a
+        database-free environment.
+        """
+        router = root.nodb_routing_map.bind_to_environ(self.httprequest.environ)
+        rule, args = router.match(return_rule=True)
+        self._set_request_dispatcher(rule)
+        self.dispatcher.pre_dispatch(rule, args)
+        response = self.dispatcher.dispatch(rule.endpoint, args)
+        self.dispatcher.post_dispatch(response)
+        return response
+
     def _serve_ir_http_fallback(self, not_found):
         """
         Called when no controller match the request path. Delegate to
@@ -1037,220 +1808,13 @@ class Request:
             functools.partial(self._serve_ir_http, rule, args),
             readonly=readonly,
         )
-    
-    def _serve_nodb(self): #ichecked
-        """
-        Dispatch the request to its matching controller in a
-        database-free environment.
-        """
-        router = root.nodb_routing_map.bind_to_environ(self.httprequest.environ)
-        rule, args = router.match(return_rule=True)
-        self._set_request_dispatcher(rule)
-        self.dispatcher.pre_dispatch(rule, args)
-        response = self.dispatcher.dispatch(rule.endpoint, args)
-        self.dispatcher.post_dispatch(response)
-        return response
-
-
-class _Response(werkzeug.wrappers.Response):
-    """
-    Outgoing HTTP response with body, status, headers and qweb support.
-    In addition to the :class:`werkzeug.wrappers.Response` parameters,
-    this class's constructor can take the following additional
-    parameters for QWeb Lazy Rendering.
-
-    :param str template: template to render
-    :param dict qcontext: Rendering context to use
-    :param int uid: User id to use for the ir.ui.view render call,
-        ``None`` to use the request's user (the default)
-
-    these attributes are available as parameters on the Response object
-    and can be altered at any time before rendering
-
-    Also exposes all the attributes and methods of
-    :class:`werkzeug.wrappers.Response`.
-    """
-    default_mimetype = 'text/html'
-
-    def __init__(self, *args, **kw): #ichecked
-        template = kw.pop('template', None)
-        qcontext = kw.pop('qcontext', None)
-        uid = kw.pop('uid', None)
-        super().__init__(*args, **kw)
-        self.set_default(template, qcontext, uid)
-    
-    @classmethod
-    def load(cls, result, fname="<function>"): #ichecked
-        """
-        Convert the return value of an endpoint into a Response.
-
-        :param result: The endpoint return value to load the Response from.
-        :type result: Union[Response, werkzeug.wrappers.BaseResponse,
-            werkzeug.exceptions.HTTPException, str, bytes, NoneType]
-        :param str fname: The endpoint function name wherefrom the
-            result emanated, used for logging.
-        :returns: The created :class:`~inphms.http.Response`.
-        :rtype: Response
-        :raises TypeError: When ``result`` type is none of the above-
-            mentioned type.
-        """
-        if isinstance(result, Response):
-            return result
-
-        if isinstance(result, werkzeug.exceptions.HTTPException):
-            _logger.warning("%s returns an HTTPException instead of raising it.", fname)
-            raise result
-
-        if isinstance(result, werkzeug.wrappers.Response):
-            response = cls.force_type(result)
-            response.set_default()
-            return response
-
-        if isinstance(result, (bytes, str, type(None))):
-            return Response(result)
-
-        raise TypeError(f"{fname} returns an invalid value: {result}")
-    
-    def set_default(self, template=None, qcontext=None, uid=None): #ichecked
-        self.template = template
-        self.qcontext = qcontext or dict()
-        self.qcontext['response_template'] = self.template
-        self.uid = uid
-    
-    def render(self):
-        """ Renders the Response's template, returns the result. """
-        self.qcontext['request'] = request
-        return request.env["ir.ui.view"]._render_template(self.template, self.qcontext)
-    
-    def flatten(self):
-        """
-        Forces the rendering of the response's template, sets the result
-        as response body and unsets :attr:`.template`
-        """
-        if self.template:
-            self.response.append(self.render())
-            self.template = None
-
-# DONE
-class Headers(Proxy):
-    _wrapped__ = werkzeug.datastructures.Headers
-
-    __getitem__ = ProxyFunc()
-    __repr__ = ProxyFunc(str)
-    __setitem__ = ProxyFunc(None)
-    __str__ = ProxyFunc(str)
-    __contains__ = ProxyFunc(bool)
-    add = ProxyFunc(None)
-    add_header = ProxyFunc(None)
-    clear = ProxyFunc(None)
-    copy = ProxyFunc(lambda v: Headers(v))  # noqa: PLW0108
-    extend = ProxyFunc(None)
-    get = ProxyFunc()
-    get_all = ProxyFunc()
-    getlist = ProxyFunc()
-    items = ProxyFunc()
-    keys = ProxyFunc()
-    pop = ProxyFunc()
-    popitem = ProxyFunc()
-    remove = ProxyFunc(None)
-    set = ProxyFunc(None)
-    setdefault = ProxyFunc()
-    setlist = ProxyFunc(None)
-    setlistdefault = ProxyFunc()
-    to_wsgi_list = ProxyFunc()
-    update = ProxyFunc(None)
-    values = ProxyFunc()
-
-# DONE
-class Response(Proxy):
-    _wrapped__ = _Response
-
-    # werkzeug.wrappers.Response attributes
-    __call__ = ProxyFunc()
-    add_etag = ProxyFunc(None)
-    age = ProxyAttr()
-    autocorrect_location_header = ProxyAttr(bool)
-    # cache_control = ProxyAttr(ResponseCacheControl)
-    call_on_close = ProxyFunc()
-    charset = ProxyAttr(str)
-    content_encoding = ProxyAttr(str)
-    content_length = ProxyAttr(int)
-    content_location = ProxyAttr(str)
-    content_md5 = ProxyAttr(str)
-    content_type = ProxyAttr(str)
-    data = ProxyAttr()
-    default_mimetype = ProxyAttr(str)
-    default_status = ProxyAttr(int)
-    delete_cookie = ProxyFunc(None)
-    direct_passthrough = ProxyAttr(bool)
-    expires = ProxyAttr()
-    force_type = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
-    freeze = ProxyFunc(None)
-    get_data = ProxyFunc()
-    get_etag = ProxyFunc()
-    get_json = ProxyFunc()
-    headers = ProxyAttr(Headers)
-    is_json = ProxyAttr(bool)
-    is_sequence = ProxyAttr(bool)
-    is_streamed = ProxyAttr(bool)
-    iter_encoded = ProxyFunc()
-    json = ProxyAttr()
-    last_modified = ProxyAttr()
-    location = ProxyAttr(str)
-    make_conditional = ProxyFunc(lambda v: Response(v))  # noqa: PLW0108
-    make_sequence = ProxyFunc(None)
-    max_cookie_size = ProxyAttr(int)
-    mimetype = ProxyAttr(str)
-    response = ProxyAttr()
-    retry_after = ProxyAttr()
-    set_cookie = ProxyFunc(None)
-    set_data = ProxyFunc(None)
-    set_etag = ProxyFunc(None)
-    status = ProxyAttr(str)
-    status_code = ProxyAttr(int)
-    # stream = ProxyAttr(ResponseStream)
-
-    # inphms.http._response attributes
-    load = ProxyFunc()
-    set_default = ProxyFunc(None)
-    qcontext = ProxyAttr()
-    template = ProxyAttr(str)
-    is_qweb = ProxyAttr(bool)
-    render = ProxyFunc()
-    flatten = ProxyFunc(None)
-
-    def __init__(self, *args, **kwargs):
-        response = None
-        if len(args) == 1:
-            arg = args[0]
-            if isinstance(arg, Response):
-                response = arg._wrapped__
-            elif isinstance(arg, _Response):
-                response = arg
-            elif isinstance(arg, werkzeug.wrappers.Response):
-                response = _Response.load(arg)
-        if response is None:
-            response = _Response(*args, **kwargs)
-
-        super().__init__(response)
-        if 'set_cookie' in response.__dict__:
-            self.__dict__['set_cookie'] = response.__dict__['set_cookie']
-
-werkzeug_abort = werkzeug.exceptions.abort
-
-def abort(status, *args, **kwargs): #ichecked
-    if isinstance(status, Response):
-        status = status._wrapped__
-    werkzeug_abort(status, *args, **kwargs)
-
-werkzeug.exceptions.abort = abort
 
 # =========================================================
 # Core type-specialized dispatchers
 # =========================================================
 
-# DONE
 _dispatchers = {}
+
 class Dispatcher(ABC): # ABC - Abstract Base Class
     routing_type: str
 
@@ -1326,7 +1890,7 @@ class Dispatcher(ABC): # ABC - Abstract Base Class
         any exception while serving a request.
         """
 
-# DONE
+
 class HttpDispatcher(Dispatcher):
     routing_type = 'http'
 
@@ -1392,274 +1956,44 @@ class HttpDispatcher(Dispatcher):
 
 
 # =========================================================
-# Controller and routes
-# =========================================================
-
-class Controller(object):
-    """
-    Class mixin that provide module controllers the ability to serve
-    content over http and to be extended in child modules.
-
-    Each class :ref:`inheriting <python:tut-inheritance>` from
-    :class:`~inphms.http.Controller` can use the :func:`~inphms.http.route`:
-    decorator to route matching incoming web requests to decorated
-    methods.
-
-    Like models, controllers can be extended by other modules. The
-    extension mechanism is different because controllers can work in a
-    database-free environment and therefore cannot use
-    :class:~inphms.api.Registry:.
-
-    To *override* a controller, :ref:`inherit <python:tut-inheritance>`
-    from its class, override relevant methods and re-expose them with
-    :func:`~inphms.http.route`:. Please note that the decorators of all
-    methods are combined, if the overriding method’s decorator has no
-    argument all previous ones will be kept, any provided argument will
-    override previously defined ones.
-
-    .. code-block:
-
-        class GreetingController(inphms.http.Controller):
-            @route('/greet', type='http', auth='public')
-            def greeting(self):
-                return 'Hello'
-
-        class UserGreetingController(GreetingController):
-            @route(auth='user')  # override auth, keep path and type
-            def greeting(self):
-                return super().handler()
-    """
-    children_classes = collections.defaultdict(list)  # indexed by module
-
-    @classmethod
-    def __init_subclass__(cls):
-        super().__init_subclass__()
-        if Controller in cls.__bases__:
-            path = cls.__module__.split('.')
-            module = path[2] if path[:2] == ['inphms', 'addons'] else ''
-            Controller.children_classes[module].append(cls)
-
-def route(route=None, **routing):
-    """
-    Decorate a controller method in order to route incoming requests
-    matching the given URL and options to the decorated method.
-
-    .. warning::
-        It is mandatory to re-decorate any method that is overridden in
-        controller extensions but the arguments can be omitted. See
-        :class:`~inphms.http.Controller` for more details.
-
-    :param Union[str, Iterable[str]] route: The paths that the decorated
-        method is serving. Incoming HTTP request paths matching this
-        route will be routed to this decorated method. See `werkzeug
-        routing documentation <http://werkzeug.pocoo.org/docs/routing/>`_
-        for the format of route expressions.
-    :param str type: The type of request, either ``'json'`` or
-        ``'http'``. It describes where to find the request parameters
-        and how to serialize the response.
-    :param str auth: The authentication method, one of the following:
-
-        * ``'user'``: The user must be authenticated and the current
-          request will be executed using the rights of the user.
-        * ``'bearer'``: The user is authenticated using an "Authorization"
-          request header, using the Bearer scheme with an API token.
-          The request will be executed with the permissions of the
-          corresponding user. If the header is missing, the request
-          must belong to an authentication session, as for the "user"
-          authentication method.
-        * ``'public'``: The user may or may not be authenticated. If he
-          isn't, the current request will be executed using the shared
-          Public user.
-        * ``'none'``: The method is always active, even if there is no
-          database. Mainly used by the framework and authentication
-          modules. The request code will not have any facilities to
-          access the current user.
-    :param Iterable[str] methods: A list of http methods (verbs) this
-        route applies to. If not specified, all methods are allowed.
-    :param str cors: The Access-Control-Allow-Origin cors directive value.
-    :param bool csrf: Whether CSRF protection should be enabled for the
-        route. Enabled by default for ``'http'``-type requests, disabled
-        by default for ``'json'``-type requests.
-    :param Union[bool, Callable[[registry, request], bool]] readonly:
-        Whether this endpoint should open a cursor on a read-only
-        replica instead of (by default) the primary read/write database.
-    :param Callable[[Exception], Response] handle_params_access_error:
-        Implement a custom behavior if an error occurred when retrieving the record
-        from the URL parameters (access error or missing error).
-    """
-    def decorator(endpoint):
-        fname = f"<function {endpoint.__module__}.{endpoint.__name__}>"
-
-        # Sanitize the routing
-        assert routing.get('type', 'http') in _dispatchers.keys()
-        if route:
-            routing['routes'] = [route] if isinstance(route, str) else route
-        wrong = routing.pop('method', None)
-        if wrong is not None:
-            _logger.warning("%s defined with invalid routing parameter 'method', assuming 'methods'", fname)
-            routing['methods'] = wrong
-
-        @functools.wraps(endpoint) # replaces the original function to route_wrapper()
-        def route_wrapper(self, *args, **params):
-            params_ok = filter_kwargs(endpoint, params)
-            params_ko = set(params) - set(params_ok)
-            if params_ko:
-                _logger.warning("%s called ignoring args %s", fname, params_ko)
-
-            result = endpoint(self, *args, **params_ok)
-            if routing['type'] == 'http':  # _generate_routing_rules() ensures type is set
-                return Response.load(result)
-            return result
-
-        route_wrapper.original_routing = routing
-        route_wrapper.original_endpoint = endpoint
-        return route_wrapper
-    return decorator
-
-def _check_and_complete_route_definition(controller_cls, submethod, merged_routing): #ichecked
-    """Verify and complete the route definition.
-
-    * Ensure 'type' is defined on each method's own routing.
-    * Ensure overrides don't change the routing type or the read/write mode
-
-    :param submethod: route method
-    :param dict merged_routing: accumulated routing values
-    """
-    default_type = submethod.original_routing.get('type', 'http')
-    routing_type = merged_routing.setdefault('type', default_type)
-    if submethod.original_routing.get('type') not in (None, routing_type):
-        _logger.warning(
-            "The endpoint %s changes the route type, using the original type: %r.",
-            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
-            routing_type)
-    submethod.original_routing['type'] = routing_type
-
-    default_auth = submethod.original_routing.get('auth', merged_routing['auth'])
-    default_mode = submethod.original_routing.get('readonly', default_auth == 'none')
-    parent_readonly = merged_routing.setdefault('readonly', default_mode)
-    child_readonly = submethod.original_routing.get('readonly')
-    if child_readonly not in (None, parent_readonly) and not callable(child_readonly):
-        _logger.warning(
-            "The endpoint %s made the route %s altough its parent was defined as %s. Setting the route read/write.",
-            f'{controller_cls.__module__}.{controller_cls.__name__}.{submethod.__name__}',
-            'readonly' if child_readonly else 'read/write',
-            'readonly' if parent_readonly else 'read/write',
-        )
-        submethod.original_routing['readonly'] = False
-
-# DONE
-def _generate_routing_rules(modules, nodb_only, converters=None): #ichecked
-    """
-    Two-fold algorithm used to (1) determine which method in the
-    controller inheritance tree should bind to what URL with respect to
-    the list of installed modules and (2) merge the various @route
-    arguments of said method with the @route arguments of the method it
-    overrides.
-    """
-    def is_valid(cls): #ichecked
-        """ Determine if the class is defined in an addon. """
-        path = cls.__module__.split('.')
-        return path[:2] == ['inphms', 'addons'] and path[2] in modules
-
-    def get_leaf_classes(cls): #ichecked
-        """
-        Find the classes that have no child and that have ``cls`` as
-        ancestor.
-        """
-        result = []
-        for subcls in cls.__subclasses__():
-            if is_valid(subcls):
-                result.extend(get_leaf_classes(subcls))
-        if not result and is_valid(cls):
-            result.append(cls)
-        return result
-
-    def build_controllers(): #ichecked
-        """
-        Create dummy controllers that inherit only from the controllers
-        defined at the given ``modules`` (often system wide modules or
-        installed modules). Modules in this context are Inphms addons.
-        """
-        # Controllers defined outside of inphms addons are outside of the
-        # controller inheritance/extension mechanism.
-        yield from (ctrl() for ctrl in Controller.children_classes.get('', []))
-        
-        # Controllers defined inside of inphms addons can be extended in
-        # other installed addons. Rebuild the class inheritance here.
-        highest_controllers = []
-        for module in modules:
-            highest_controllers.extend(Controller.children_classes.get(module, []))
-
-        for top_ctrl in highest_controllers:
-            leaf_controllers = list(unique(get_leaf_classes(top_ctrl)))
-
-            name = top_ctrl.__name__
-            if leaf_controllers != [top_ctrl]:
-                name += ' (extended by %s)' %  ', '.join(
-                    bot_ctrl.__name__
-                    for bot_ctrl in leaf_controllers
-                    if bot_ctrl is not top_ctrl
-                )
-
-            Ctrl = type(name, tuple(reversed(leaf_controllers)), {})
-            yield Ctrl()
-    
-    for ctrl in build_controllers(): #ichecked
-        for method_name, method in inspect.getmembers(ctrl, inspect.ismethod):
-            # Skip this method if it is not @route decorated anywhere in
-            # the hierarchy
-            def is_method_a_route(cls):
-                return getattr(getattr(cls, method_name, None), 'original_routing', None) is not None
-            if not any(map(is_method_a_route, type(ctrl).mro())):
-                continue
-
-            merged_routing = {
-                # 'type': 'http',  # set below
-                'auth': 'user',
-                'methods': None,
-                'routes': [],
-            }
-
-            for cls in unique(reversed(type(ctrl).mro()[:-2])):  # ancestors first
-                if method_name not in cls.__dict__:
-                    continue
-                submethod = getattr(cls, method_name)
-
-                if not hasattr(submethod, 'original_routing'):
-                    _logger.warning("The endpoint %s is not decorated by @route(), decorating it myself.", f'{cls.__module__}.{cls.__name__}.{method_name}')
-                    submethod = route()(submethod)
-
-                _check_and_complete_route_definition(cls, submethod, merged_routing)
-
-                merged_routing.update(submethod.original_routing)
-
-            if not merged_routing['routes']:
-                _logger.warning("%s is a controller endpoint without any route, skipping.", f'{cls.__module__}.{cls.__name__}.{method_name}')
-                continue
-
-            if nodb_only and merged_routing['auth'] != "none":
-                continue
-
-            for url in merged_routing['routes']:
-                # duplicates the function (partial) with a copy of the
-                # original __dict__ (update_wrapper) to keep a reference
-                # to `original_routing` and `original_endpoint`, assign
-                # the merged routing ONLY on the duplicated function to
-                # ensure method's immutability.
-                endpoint = functools.partial(method)
-                functools.update_wrapper(endpoint, method)
-                endpoint.routing = merged_routing
-
-                yield (url, endpoint)
-
-
-
-# =========================================================
 # WSGI Entry Point
 # =========================================================
 class Application:
     """ INPHMS WSGI Application """
     # See also: https://www.python.org/dev/peps/pep-3333
+    
+    def set_csp(self, response): #ichecked
+        """ Set the Content Security Policiy headers, """
+        headers = response.headers
+        headers['X-Content-Type-Options'] = 'nosniff'
+
+        if 'Content-Security-Policy' in headers:
+            return
+
+        if not headers.get('Content-Type', '').startswith('image/'):
+            return
+
+        headers['Content-Security-Policy'] = "default-src 'none'"
+
+    @lazy_property
+    def session_store(self): #ichecked
+        path = inphms.tools.config.session_dir
+        _logger.debug('HTTP sessions stored in: %s', path)
+        return FilesystemSessionStore(path, session_class=Session, renew_missing=True)
+
+    @lazy_property
+    def nodb_routing_map(self): #ichecked
+        nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
+        for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
+            routing = submap(endpoint.routing, ROUTING_KEYS)
+            if routing['methods'] is not None and 'OPTIONS' not in routing['methods']:
+                routing['methods'] = [*routing['methods'], 'OPTIONS']
+            rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
+            rule.merge_slashes = False
+            nodb_routing_map.add(rule)
+
+        return nodb_routing_map
+
 
     @lazy_property
     def statics(self): #ichecked
@@ -1796,37 +2130,5 @@ class Application:
 
             finally:
                 _request_stack.pop()
-
-    @lazy_property
-    def session_store(self): #ichecked
-        path = inphms.tools.config.session_dir
-        _logger.debug('HTTP sessions stored in: %s', path)
-        return FilesystemSessionStore(path, session_class=Session, renew_missing=True)
-
-    @lazy_property
-    def nodb_routing_map(self): #ichecked
-        nodb_routing_map = werkzeug.routing.Map(strict_slashes=False, converters=None)
-        for url, endpoint in _generate_routing_rules([''] + inphms.conf.server_wide_modules, nodb_only=True):
-            routing = submap(endpoint.routing, ROUTING_KEYS)
-            if routing['methods'] is not None and 'OPTIONS' not in routing['methods']:
-                routing['methods'] = [*routing['methods'], 'OPTIONS']
-            rule = werkzeug.routing.Rule(url, endpoint=endpoint, **routing)
-            rule.merge_slashes = False
-            nodb_routing_map.add(rule)
-
-        return nodb_routing_map
-    
-    def set_csp(self, response): #ichecked
-        """ Set the Content Security Policiy headers, """
-        headers = response.headers
-        headers['X-Content-Type-Options'] = 'nosniff'
-
-        if 'Content-Security-Policy' in headers:
-            return
-
-        if not headers.get('Content-Type', '').startswith('image/'):
-            return
-
-        headers['Content-Security-Policy'] = "default-src 'none'"
 
 root = Application()

@@ -18,7 +18,7 @@ decorator==5.1.1  ; python_version >= '3.11'
 freezegun==1.1.0 ; python_version < '3.11'  # (Jammy)
 freezegun==1.2.1 ; python_version >= '3.11' and python_version < '3.13'
 freezegun==1.5.1 ; python_version >= '3.13'
-# geoip2==2.9.0
+geoip2==2.9.0
 # gevent==21.8.0 ; sys_platform != 'win32' and python_version == '3.10'  # (Jammy)
 # gevent==22.10.2; sys_platform != 'win32' and python_version > '3.10' and python_version < '3.12'
 # gevent==24.2.1 ; sys_platform != 'win32' and python_version >= '3.12' and python_version < '3.13'  # (Noble)
@@ -42,7 +42,7 @@ MarkupSafe==2.1.2 ; python_version > '3.10' and python_version < '3.12'
 MarkupSafe==2.1.5 ; python_version >= '3.12'  # (Noble) Mostly to have a wheel package
 # num2words==0.5.10 ; python_version < '3.12'  # (Jammy / Bookworm)
 # num2words==0.5.13 ; python_version >= '3.12' 
-# ofxparse==0.21
+ofxparse==0.21
 # openpyxl==3.0.9 ; python_version < '3.12'
 # openpyxl==3.1.2 ; python_version >= '3.12'
 passlib==1.7.4 # min version = 1.7.2 (Focal with security backports)
