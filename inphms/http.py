@@ -159,12 +159,10 @@ from .exceptions import UserError, AccessError, AccessDenied
 from .modules.module import get_manifest
 from .modules.registry import Registry
 from .service import security, model as service_model
-# from .tools import (config, consteq, file_path, get_lang, json_default,
-#                     parse_version, profiler, unique, exception_to_unicode)
 from .tools import (
     parse_version, config, file_path,
     profiler, unique, consteq,
-    get_lang
+    get_lang, json_default, exception_to_unicode
 )
 from .tools.func import lazy_property, filter_kwargs
 from .tools.misc import submap
@@ -367,6 +365,235 @@ def get_session_max_inactivity(env):
     except ValueError:
         _logger.warning("Invalid value for 'sessions.max_inactivity_seconds', using default value.")
         return SESSION_LIFETIME
+
+def serialize_exception(exception):
+    name = type(exception).__name__
+    module = type(exception).__module__
+
+    return {
+        'name': f'{module}.{name}' if module else name,
+        'debug': traceback.format_exc(),
+        'message': exception_to_unicode(exception),
+        'arguments': exception.args,
+        'context': getattr(exception, 'context', {}),
+    }
+
+
+def dispatch_rpc(service_name, method, params):
+    """
+    Perform a RPC call.
+
+    :param str service_name: either "common", "db" or "object".
+    :param str method: the method name of the given service to execute
+    :param Mapping params: the keyword arguments for method call
+    :return: the return value of the called method
+    :rtype: Any
+    """
+    rpc_dispatchers = {
+        'common': inphms.service.common.dispatch,
+        'db': inphms.service.db.dispatch,
+        'object': inphms.service.model.dispatch,
+    }
+
+    with borrow_request():
+        threading.current_thread().uid = None
+        threading.current_thread().dbname = None
+
+        dispatch = rpc_dispatchers[service_name]
+        return dispatch(method, params)
+
+
+# =========================================================
+# File Streaming
+# =========================================================
+
+class Stream:
+    """
+    Send the content of a file, an attachment or a binary field via HTTP
+
+    This utility is safe, cache-aware and uses the best available
+    streaming strategy. Works best with the --x-sendfile cli option.
+
+    Create a Stream via one of the constructors: :meth:`~from_path`:, or
+    :meth:`~from_binary_field`:, generate the corresponding HTTP response
+    object via :meth:`~get_response`:.
+
+    Instantiating a Stream object manually without using one of the
+    dedicated constructors is discouraged.
+    """
+
+    type: str = ''  # 'data' or 'path' or 'url'
+    data = None
+    path = None
+    url = None
+
+    mimetype = None
+    as_attachment = False
+    download_name = None
+    conditional = True
+    etag = True
+    last_modified = None
+    max_age = None
+    immutable = False
+    size = None
+    public = False
+
+    def __init__(self, **kwargs):
+        # Remove class methods from the instances
+        self.from_path = self.from_attachment = self.from_binary_field = None
+        self.__dict__.update(kwargs)
+    
+    @classmethod
+    def from_path(cls, path, filter_ext=('',), public=False):
+        """
+        Create a :class:`~Stream`: from an addon resource.
+
+        :param path: See :func:`~inphms.tools.file_path`
+        :param filter_ext: See :func:`~inphms.tools.file_path`
+        :param bool public: Advertise the resource as being cachable by
+            intermediate proxies, otherwise only let the browser caches
+            it.
+        """
+        path = file_path(path, filter_ext)
+        check = adler32(path.encode())
+        stat = os.stat(path)
+        return cls(
+            type='path',
+            path=path,
+            mimetype=mimetypes.guess_type(path)[0],
+            download_name=os.path.basename(path),
+            etag=f'{int(stat.st_mtime)}-{stat.st_size}-{check}',
+            last_modified=stat.st_mtime,
+            size=stat.st_size,
+            public=public,
+        )
+
+    @classmethod
+    def from_binary_field(cls, record, field_name):
+        """ Create a :class:`~Stream`: from a binary field. """
+        data = record[field_name] or b''
+
+        # Image fields enforce base64 encoding. Binary fields don't
+        # enforce anything: raw bytes are fine, expected even.
+        # People nonetheless write base64 encoded bytes inside binary
+        # fields, and expect automatic decoding when read, crazy!
+        with contextlib.suppress(ValueError):
+            data = base64.b64decode(
+                # Some libs add linefeed every X (where X < 79) char in
+                # the base64, for email mime. validate=True would raise
+                # an error for those linefeeds so stip them.
+                data.replace(b'\r', b'').replace(b'\n', b''),
+                validate=True,
+            )
+
+        return cls(
+            type='data',
+            data=data,
+            etag=request.env['ir.attachment']._compute_checksum(data),
+            last_modified=record.write_date if record._log_access else None,
+            size=len(data),
+            public=record.env.user._is_public()  # good enough
+        )
+
+    def read(self):
+        """ Get the stream content as bytes. """
+        if self.type == 'url':
+            raise ValueError("Cannot read an URL")
+
+        if self.type == 'data':
+            return self.data
+
+        with open(self.path, 'rb') as file:
+            return file.read()
+
+    def get_response(
+        self,
+        as_attachment=None,
+        immutable=None,
+        content_security_policy="default-src 'none'",
+        **send_file_kwargs
+    ):
+        """
+        Create the corresponding :class:`~Response` for the current stream.
+
+        :param bool|None as_attachment: Indicate to the browser that it
+            should offer to save the file instead of displaying it.
+        :param bool|None immutable: Add the ``immutable`` directive to
+            the ``Cache-Control`` response header, allowing intermediary
+            proxies to aggressively cache the response. This option also
+            set the ``max-age`` directive to 1 year.
+        :param str|None content_security_policy: Optional value for the
+            ``Content-Security-Policy`` (CSP) header. This header is
+            used by browsers to allow/restrict the downloaded resource
+            to itself perform new http requests. By default CSP is set
+            to ``"default-scr 'none'"`` which restrict all requests.
+        :param send_file_kwargs: Other keyword arguments to send to
+            :func:`odoo.tools._vendor.send_file.send_file` instead of
+            the stream sensitive values. Discouraged.
+        """
+        assert self.type in ('url', 'data', 'path'), "Invalid type: {self.type!r}, should be 'url', 'data' or 'path'."
+        assert getattr(self, self.type) is not None, "There is nothing to stream, missing {self.type!r} attribute."
+
+        if self.type == 'url':
+            if self.max_age is not None:
+                res = request.redirect(self.url, code=302, local=False)
+                res.headers['Cache-Control'] = f'max-age={self.max_age}'
+                return res
+            return request.redirect(self.url, code=301, local=False)
+
+        if as_attachment is None:
+            as_attachment = self.as_attachment
+        if immutable is None:
+            immutable = self.immutable
+
+        send_file_kwargs = {
+            'mimetype': self.mimetype,
+            'as_attachment': as_attachment,
+            'download_name': self.download_name,
+            'conditional': self.conditional,
+            'etag': self.etag,
+            'last_modified': self.last_modified,
+            'max_age': STATIC_CACHE_LONG if immutable else self.max_age,
+            'environ': request.httprequest.environ,
+            'response_class': Response,
+            **send_file_kwargs,
+        }
+
+        if self.type == 'data':
+            res = _send_file(BytesIO(self.data), **send_file_kwargs)
+        else:  # self.type == 'path'
+            send_file_kwargs['use_x_sendfile'] = False
+            if config['x_sendfile']:
+                with contextlib.suppress(ValueError):  # outside of the filestore
+                    fspath = Path(self.path).relative_to(opj(config['data_dir'], 'filestore'))
+                    x_accel_redirect = f'/web/filestore/{fspath}'
+                    send_file_kwargs['use_x_sendfile'] = True
+
+            res = _send_file(self.path, **send_file_kwargs)
+            if 'X-Sendfile' in res.headers:
+                res.headers['X-Accel-Redirect'] = x_accel_redirect
+
+                # In case of X-Sendfile/X-Accel-Redirect, the body is empty,
+                # yet werkzeug gives the length of the file. This makes
+                # NGINX wait for content that'll never arrive.
+                res.headers['Content-Length'] = '0'
+
+        res.headers['X-Content-Type-Options'] = 'nosniff'
+
+        if content_security_policy:  # see also Application.set_csp()
+            res.headers['Content-Security-Policy'] = content_security_policy
+
+        if self.public:
+            if (res.cache_control.max_age or 0) > 0:
+                res.cache_control.public = True
+        else:
+            res.cache_control.pop('public', '')
+            res.cache_control.private = True
+        if immutable:
+            res.cache_control['immutable'] = None  # None sets the directive
+
+        return res
+
 
 # =========================================================
 # Controller and routes
@@ -1660,6 +1887,49 @@ class Request:
         if sess.is_dirty or cookie_sid != sess.sid:
             self.future_response.set_cookie('session_id', sess.sid, max_age=get_session_max_inactivity(self.env), httponly=True)
 
+
+    def make_response(self, data, headers=None, cookies=None, status=200):
+        """ Helper for non-HTML responses, or HTML responses with custom
+        response headers or cookies.
+
+        While handlers can just return the HTML markup of a page they want to
+        send as a string if non-HTML data is returned they need to create a
+        complete response object, or the returned data will not be correctly
+        interpreted by the clients.
+
+        :param str data: response body
+        :param int status: http status code
+        :param headers: HTTP headers to set on the response
+        :type headers: ``[(name, value)]``
+        :param collections.abc.Mapping cookies: cookies to set on the client
+        :returns: a response object.
+        :rtype: :class:`~inphms.http.Response`
+        """
+        response = Response(data, status=status, headers=headers)
+        if cookies:
+            for k, v in cookies.items():
+                response.set_cookie(k, v)
+        return response
+
+    def make_json_response(self, data, headers=None, cookies=None, status=200):
+        """ Helper for JSON responses, it json-serializes ``data`` and
+        sets the Content-Type header accordingly if none is provided.
+
+        :param data: the data that will be json-serialized into the response body
+        :param int status: http status code
+        :param List[(str, str)] headers: HTTP headers to set on the response
+        :param collections.abc.Mapping cookies: cookies to set on the client
+        :rtype: :class:`~inphms.http.Response`
+        """
+        data = json.dumps(data, ensure_ascii=False, default=json_default)
+
+        headers = werkzeug.datastructures.Headers(headers)
+        headers['Content-Length'] = len(data)
+        if 'Content-Type' not in headers:
+            headers['Content-Type'] = 'application/json; charset=utf-8'
+
+        return self.make_response(data, headers.to_wsgi_list(), cookies, status)
+
     # =====================================================
     # Routing
     # =====================================================
@@ -1955,6 +2225,103 @@ class HttpDispatcher(Dispatcher):
         )
 
 
+class JsonRPCDispatcher(Dispatcher):
+    routing_type = 'json'
+
+    def __init__(self, request):
+        super().__init__(request)
+        self.jsonrequest = {}
+        self.request_id = None
+
+    @classmethod
+    def is_compatible_with(cls, request):
+        return request.httprequest.mimetype in JSON_MIMETYPES
+
+    def dispatch(self, endpoint, args):
+        """
+        `JSON-RPC 2 <http://www.jsonrpc.org/specification>`_ over HTTP.
+
+        Our implementation differs from the specification on two points:
+
+        1. The ``method`` member of the JSON-RPC request payload is
+           ignored as the HTTP path is already used to route the request
+           to the controller.
+        2. We only support parameter structures by-name, i.e. the
+           ``params`` member of the JSON-RPC request payload MUST be a
+           JSON Object and not a JSON Array.
+
+        In addition, it is possible to pass a context that replaces
+        the session context via a special ``context`` argument that is
+        removed prior to calling the endpoint.
+
+        Successful request::
+
+          --> {"jsonrpc": "2.0", "method": "call", "params": {"arg1": "val1" }, "id": null}
+
+          <-- {"jsonrpc": "2.0", "result": { "res1": "val1" }, "id": null}
+
+        Request producing a error::
+
+          --> {"jsonrpc": "2.0", "method": "call", "params": {"arg1": "val1" }, "id": null}
+
+          <-- {"jsonrpc": "2.0", "error": {"code": 1, "message": "End user error message.", "data": {"code": "codestring", "debug": "traceback" } }, "id": null}
+
+        """
+        try:
+            self.jsonrequest = self.request.get_json_data()
+            self.request_id = self.jsonrequest.get('id')
+        except ValueError:
+            # must use abort+Response to bypass handle_error
+            werkzeug.exceptions.abort(Response("Invalid JSON data", status=400))
+        except AttributeError:
+            # must use abort+Response to bypass handle_error
+            werkzeug.exceptions.abort(Response("Invalid JSON-RPC data", status=400))
+
+        self.request.params = dict(self.jsonrequest.get('params', {}), **args)
+
+        if self.request.db:
+            result = self.request.registry['ir.http']._dispatch(endpoint)
+        else:
+            result = endpoint(**self.request.params)
+        return self._response(result)
+
+    def handle_error(self, exc: Exception) -> collections.abc.Callable:
+        """
+        Handle any exception that occurred while dispatching a request to
+        a `type='json'` route. Also handle exceptions that occurred when
+        no route matched the request path, that no fallback page could
+        be delivered and that the request ``Content-Type`` was json.
+
+        :param exc: the exception that occurred.
+        :returns: a WSGI application
+        """
+        error = {
+            'code': 200,  # this code is the JSON-RPC level code, it is
+                          # distinct from the HTTP status code. This
+                          # code is ignored and the value 200 (while
+                          # misleading) is totally arbitrary.
+            'message': "Inphms Server Error",
+            'data': serialize_exception(exc),
+        }
+        if isinstance(exc, NotFound):
+            error['code'] = 404
+            error['message'] = "404: Not Found"
+        elif isinstance(exc, SessionExpiredException):
+            error['code'] = 100
+            error['message'] = "Inphms Session Expired"
+
+        return self._response(error=error)
+
+    def _response(self, result=None, error=None):
+        response = {'jsonrpc': '2.0', 'id': self.request_id}
+        if error is not None:
+            response['error'] = error
+        if result is not None:
+            response['result'] = result
+
+        return self.request.make_json_response(response)
+
+
 # =========================================================
 # WSGI Entry Point
 # =========================================================
@@ -2130,5 +2497,31 @@ class Application:
 
             finally:
                 _request_stack.pop()
+
+
+    @lazy_property
+    def geoip_city_db(self):
+        try:
+            return geoip2.database.Reader(config['geoip_city_db'])
+        except (OSError, maxminddb.InvalidDatabaseError):
+            _logger.debug(
+                "Couldn't load Geoip City file at %s. IP Resolver disabled.",
+                config['geoip_city_db'], exc_info=True
+            )
+            raise
+
+    @lazy_property
+    def geoip_country_db(self):
+        try:
+            return geoip2.database.Reader(config['geoip_country_db'])
+        except (OSError, maxminddb.InvalidDatabaseError) as exc:
+            _logger.debug("Couldn't load Geoip Country file (%s). Fallbacks on Geoip City.", exc,)
+            raise
+    
+
+    def get_db_router(self, db):
+        if not db:
+            return self.nodb_routing_map
+        return request.env['ir.http'].routing_map()
 
 root = Application()
