@@ -23,6 +23,72 @@ from .modules import module
 _logger = logging.getLogger(__name__)
 
 
+class WatchedFileHandler(logging.handlers.WatchedFileHandler):
+    def __init__(self, filename):
+        self.errors = None  # py38
+        super().__init__(filename)
+        # Unfix bpo-26789, in case the fix is present
+        self._builtin_open = None
+
+    def _open(self):
+        return open(self.baseFilename, self.mode, encoding=self.encoding, errors=self.errors)
+
+
+class PostgreSQLHandler(logging.Handler):
+    """ PostgreSQL Logging Handler will store logs in the database, by default
+    the current database, can be set using --log-db=DBNAME
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._support_metadata = False
+        if tools.config['log_db'] != '%d':
+            with contextlib.suppress(Exception), tools.mute_logger('inphms.sql_db'), sql_db.db_connect(tools.config['log_db'], allow_uri=True).cursor() as cr:
+                cr.execute("""SELECT 1 FROM information_schema.columns WHERE table_name='ir_logging' and column_name='metadata'""")
+                self._support_metadata = bool(cr.fetchone())
+
+    def emit(self, record):
+        ct = threading.current_thread()
+        ct_db = getattr(ct, 'dbname', None)
+        dbname = tools.config['log_db'] if tools.config['log_db'] and tools.config['log_db'] != '%d' else ct_db
+        if not dbname:
+            return
+        with contextlib.suppress(Exception), tools.mute_logger('inphms.sql_db'), sql_db.db_connect(dbname, allow_uri=True).cursor() as cr:
+            # preclude risks of deadlocks
+            cr.execute("SET LOCAL statement_timeout = 1000")
+            msg = str(record.msg)
+            if record.args:
+                msg = msg % record.args
+            traceback = getattr(record, 'exc_text', '')
+            if traceback:
+                msg = "%s\n%s" % (msg, traceback)
+            # we do not use record.levelname because it may have been changed by ColoredFormatter.
+            levelname = logging.getLevelName(record.levelno)
+
+            val = ('server', ct_db, record.name, levelname, msg, record.pathname, record.lineno, record.funcName)
+
+            if self._support_metadata:
+                metadata = {}
+                if module.current_test:
+                    try:
+                        metadata['test'] = module.current_test.get_log_metadata()
+                    except:
+                        pass
+
+                if metadata:
+                    val = (*val, json.dumps(metadata))
+                    cr.execute(f"""
+                        INSERT INTO ir_logging(create_date, type, dbname, name, level, message, path, line, func, metadata)
+                        VALUES (NOW() at time zone 'UTC', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, val)
+                    return
+
+            cr.execute(f"""
+                INSERT INTO ir_logging(create_date, type, dbname, name, level, message, path, line, func)
+                VALUES (NOW() at time zone 'UTC', %s, %s, %s, %s, %s, %s, %s, %s)
+            """, val)
+
+
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, _NOTHING, DEFAULT = range(10)
 #The background is set with 40 plus the number of the color, and the foreground with 30
 #These are the sequences needed to get colored output
@@ -37,6 +103,113 @@ LEVEL_COLOR_MAPPING = {
     logging.ERROR: (RED, DEFAULT),
     logging.CRITICAL: (WHITE, RED),
 }
+
+class PerfFilter(logging.Filter):
+
+    def format_perf(self, query_count, query_time, remaining_time):
+        return ("%d" % query_count, "%.3f" % query_time, "%.3f" % remaining_time)
+
+    def format_cursor_mode(self, cursor_mode):
+        return cursor_mode or '-'
+
+    def filter(self, record):
+        if hasattr(threading.current_thread(), "query_count"):
+            query_count = threading.current_thread().query_count
+            query_time = threading.current_thread().query_time
+            perf_t0 = threading.current_thread().perf_t0
+            remaining_time = time.time() - perf_t0 - query_time
+            record.perf_info = '%s %s %s' % self.format_perf(query_count, query_time, remaining_time)
+            if tools.config['db_replica_host'] is not False:
+                cursor_mode = threading.current_thread().cursor_mode
+                record.perf_info = f'{record.perf_info} {self.format_cursor_mode(cursor_mode)}'
+            delattr(threading.current_thread(), "query_count")
+        else:
+            if tools.config['db_replica_host'] is not False:
+                record.perf_info = "- - - -"
+            record.perf_info = "- - -"
+        return True
+
+
+class ColoredPerfFilter(PerfFilter):
+    def format_perf(self, query_count, query_time, remaining_time):
+        def colorize_time(time, format, low=1, high=5):
+            if time > high:
+                return COLOR_PATTERN % (30 + RED, 40 + DEFAULT, format % time)
+            if time > low:
+                return COLOR_PATTERN % (30 + YELLOW, 40 + DEFAULT, format % time)
+            return format % time
+        return (
+            colorize_time(query_count, "%d", 100, 1000),
+            colorize_time(query_time, "%.3f", 0.1, 3),
+            colorize_time(remaining_time, "%.3f", 1, 5),
+            )
+
+    def format_cursor_mode(self, cursor_mode):
+        cursor_mode = super().format_cursor_mode(cursor_mode)
+        cursor_mode_color = (
+            RED if cursor_mode == 'ro->rw'
+            else YELLOW if cursor_mode == 'rw'
+            else GREEN
+        )
+        return COLOR_PATTERN % (30 + cursor_mode_color, 40 + DEFAULT, cursor_mode)
+
+
+class DBFormatter(logging.Formatter):
+    def format(self, record):
+        record.pid = os.getpid()
+        record.dbname = getattr(threading.current_thread(), 'dbname', '?')
+        return logging.Formatter.format(self, record)
+
+
+class ColoredFormatter(DBFormatter):
+    def format(self, record):
+        fg_color, bg_color = LEVEL_COLOR_MAPPING.get(record.levelno, (GREEN, DEFAULT))
+        record.levelname = COLOR_PATTERN % (30 + fg_color, 40 + bg_color, record.levelname)
+        return DBFormatter.format(self, record)
+
+
+DEFAULT_LOG_CONFIGURATION = [
+    'inphms.http.rpc.request:INFO',
+    'inphms.http.rpc.response:INFO',
+    ':INFO',
+]
+PSEUDOCONFIG_MAPPER = {
+    'debug_rpc_answer': ['inphms:DEBUG', 'inphms.sql_db:INFO', 'inphms.http.rpc:DEBUG'],
+    'debug_rpc': ['inphms:DEBUG', 'inphms.sql_db:INFO', 'inphms.http.rpc.request:DEBUG'],
+    'debug': ['inphms:DEBUG', 'inphms.sql_db:INFO'],
+    'debug_sql': ['inphms.sql_db:DEBUG'],
+    'info': [],
+    'runbot': ['inphms:RUNBOT', 'werkzeug:WARNING'],
+    'warn': ['inphms:WARNING', 'werkzeug:WARNING'],
+    'error': ['inphms:ERROR', 'werkzeug:ERROR'],
+    'critical': ['inphms:CRITICAL', 'werkzeug:CRITICAL'],
+}
+logging.RUNBOT = 25
+logging.addLevelName(logging.RUNBOT, "INFO") # displayed as info in log
+IGNORE = {
+    'Comparison between bytes and int', # a.foo != False or some shit, we don't care
+}
+def showwarning_with_traceback(message, category, filename, lineno, file=None, line=None):
+    if category is BytesWarning and message.args[0] in IGNORE:
+        return
+
+    # find the stack frame matching (filename, lineno)
+    filtered = []
+    for frame in traceback.extract_stack():
+        if 'importlib' not in frame.filename:
+            filtered.append(frame)
+        if frame.filename == filename and frame.lineno == lineno:
+            break
+    return showwarning(
+        message, category, filename, lineno,
+        file=file,
+        line=''.join(traceback.format_list(filtered))
+    )
+
+class LogRecord(logging.LogRecord):
+    def __init__(self, name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None):
+        super().__init__(name, level, pathname, lineno, msg, args, exc_info, func, sinfo)
+        self.perf_info = ""
 
 showwarning = None
 def init_logger():
@@ -173,175 +346,6 @@ def init_logger():
     for logconfig_item in logging_configurations:
         _logger.debug('logger level set: "%s"', logconfig_item)
 
-DEFAULT_LOG_CONFIGURATION = [
-    'inphms.http.rpc.request:INFO',
-    'inphms.http.rpc.response:INFO',
-    ':INFO',
-]
-PSEUDOCONFIG_MAPPER = {
-    'debug_rpc_answer': ['inphms:DEBUG', 'inphms.sql_db:INFO', 'inphms.http.rpc:DEBUG'],
-    'debug_rpc': ['inphms:DEBUG', 'inphms.sql_db:INFO', 'inphms.http.rpc.request:DEBUG'],
-    'debug': ['inphms:DEBUG', 'inphms.sql_db:INFO'],
-    'debug_sql': ['inphms.sql_db:DEBUG'],
-    'info': [],
-    'runbot': ['inphms:RUNBOT', 'werkzeug:WARNING'],
-    'warn': ['inphms:WARNING', 'werkzeug:WARNING'],
-    'error': ['inphms:ERROR', 'werkzeug:ERROR'],
-    'critical': ['inphms:CRITICAL', 'werkzeug:CRITICAL'],
-}
-
-logging.RUNBOT = 25
-logging.addLevelName(logging.RUNBOT, "INFO") # displayed as info in log
-IGNORE = {
-    'Comparison between bytes and int', # a.foo != False or some shit, we don't care
-}
-
-def showwarning_with_traceback(message, category, filename, lineno, file=None, line=None):
-    if category is BytesWarning and message.args[0] in IGNORE:
-        return
-
-    # find the stack frame matching (filename, lineno)
-    filtered = []
-    for frame in traceback.extract_stack():
-        if 'importlib' not in frame.filename:
-            filtered.append(frame)
-        if frame.filename == filename and frame.lineno == lineno:
-            break
-    return showwarning(
-        message, category, filename, lineno,
-        file=file,
-        line=''.join(traceback.format_list(filtered))
-    )
-
 def runbot(self, message, *args, **kws):
     self.log(logging.RUNBOT, message, *args, **kws)
 logging.Logger.runbot = runbot
-
-class LogRecord(logging.LogRecord):
-    def __init__(self, name, level, pathname, lineno, msg, args, exc_info, func=None, sinfo=None):
-        super().__init__(name, level, pathname, lineno, msg, args, exc_info, func, sinfo)
-        self.perf_info = ""
-
-class DBFormatter(logging.Formatter):
-    def format(self, record):
-        record.pid = os.getpid()
-        record.dbname = getattr(threading.current_thread(), 'dbname', '?')
-        return logging.Formatter.format(self, record)
-
-class PerfFilter(logging.Filter):
-
-    def format_perf(self, query_count, query_time, remaining_time):
-        return ("%d" % query_count, "%.3f" % query_time, "%.3f" % remaining_time)
-
-    def format_cursor_mode(self, cursor_mode):
-        return cursor_mode or '-'
-
-    def filter(self, record):
-        if hasattr(threading.current_thread(), "query_count"):
-            query_count = threading.current_thread().query_count
-            query_time = threading.current_thread().query_time
-            perf_t0 = threading.current_thread().perf_t0
-            remaining_time = time.time() - perf_t0 - query_time
-            record.perf_info = '%s %s %s' % self.format_perf(query_count, query_time, remaining_time)
-            if tools.config['db_replica_host'] is not False:
-                cursor_mode = threading.current_thread().cursor_mode
-                record.perf_info = f'{record.perf_info} {self.format_cursor_mode(cursor_mode)}'
-            delattr(threading.current_thread(), "query_count")
-        else:
-            if tools.config['db_replica_host'] is not False:
-                record.perf_info = "- - - -"
-            record.perf_info = "- - -"
-        return True
-
-class WatchedFileHandler(logging.handlers.WatchedFileHandler):
-    def __init__(self, filename):
-        self.errors = None  # py38
-        super().__init__(filename)
-        # Unfix bpo-26789, in case the fix is present
-        self._builtin_open = None
-
-    def _open(self):
-        return open(self.baseFilename, self.mode, encoding=self.encoding, errors=self.errors)
-
-class ColoredFormatter(DBFormatter):
-    def format(self, record):
-        fg_color, bg_color = LEVEL_COLOR_MAPPING.get(record.levelno, (GREEN, DEFAULT))
-        record.levelname = COLOR_PATTERN % (30 + fg_color, 40 + bg_color, record.levelname)
-        return DBFormatter.format(self, record)
-
-class ColoredPerfFilter(PerfFilter):
-    def format_perf(self, query_count, query_time, remaining_time):
-        def colorize_time(time, format, low=1, high=5):
-            if time > high:
-                return COLOR_PATTERN % (30 + RED, 40 + DEFAULT, format % time)
-            if time > low:
-                return COLOR_PATTERN % (30 + YELLOW, 40 + DEFAULT, format % time)
-            return format % time
-        return (
-            colorize_time(query_count, "%d", 100, 1000),
-            colorize_time(query_time, "%.3f", 0.1, 3),
-            colorize_time(remaining_time, "%.3f", 1, 5),
-            )
-
-    def format_cursor_mode(self, cursor_mode):
-        cursor_mode = super().format_cursor_mode(cursor_mode)
-        cursor_mode_color = (
-            RED if cursor_mode == 'ro->rw'
-            else YELLOW if cursor_mode == 'rw'
-            else GREEN
-        )
-        return COLOR_PATTERN % (30 + cursor_mode_color, 40 + DEFAULT, cursor_mode)
-
-class PostgreSQLHandler(logging.Handler):
-    """ PostgreSQL Logging Handler will store logs in the database, by default
-    the current database, can be set using --log-db=DBNAME
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._support_metadata = False
-        if tools.config['log_db'] != '%d':
-            with contextlib.suppress(Exception), tools.mute_logger('inphms.sql_db'), sql_db.db_connect(tools.config['log_db'], allow_uri=True).cursor() as cr:
-                cr.execute("""SELECT 1 FROM information_schema.columns WHERE table_name='ir_logging' and column_name='metadata'""")
-                self._support_metadata = bool(cr.fetchone())
-
-    def emit(self, record):
-        ct = threading.current_thread()
-        ct_db = getattr(ct, 'dbname', None)
-        dbname = tools.config['log_db'] if tools.config['log_db'] and tools.config['log_db'] != '%d' else ct_db
-        if not dbname:
-            return
-        with contextlib.suppress(Exception), tools.mute_logger('inphms.sql_db'), sql_db.db_connect(dbname, allow_uri=True).cursor() as cr:
-            # preclude risks of deadlocks
-            cr.execute("SET LOCAL statement_timeout = 1000")
-            msg = str(record.msg)
-            if record.args:
-                msg = msg % record.args
-            traceback = getattr(record, 'exc_text', '')
-            if traceback:
-                msg = "%s\n%s" % (msg, traceback)
-            # we do not use record.levelname because it may have been changed by ColoredFormatter.
-            levelname = logging.getLevelName(record.levelno)
-
-            val = ('server', ct_db, record.name, levelname, msg, record.pathname, record.lineno, record.funcName)
-
-            if self._support_metadata:
-                metadata = {}
-                if module.current_test:
-                    try:
-                        metadata['test'] = module.current_test.get_log_metadata()
-                    except:
-                        pass
-
-                if metadata:
-                    val = (*val, json.dumps(metadata))
-                    cr.execute(f"""
-                        INSERT INTO ir_logging(create_date, type, dbname, name, level, message, path, line, func, metadata)
-                        VALUES (NOW() at time zone 'UTC', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, val)
-                    return
-
-            cr.execute(f"""
-                INSERT INTO ir_logging(create_date, type, dbname, name, level, message, path, line, func)
-                VALUES (NOW() at time zone 'UTC', %s, %s, %s, %s, %s, %s, %s, %s)
-            """, val)
