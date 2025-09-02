@@ -53,11 +53,10 @@ from . import tools
 ## MODEL CLASSES
 from . import api
 from . import models
-# from . import fields
-# from inphms.tools.translate import _, _lt
+from . import fields
+from inphms.tools.translate import _, _lt
 # from inphms.fields import Command
 
 ## OTHER IMPORT REQUIRED
 from . import cli
 from . import http
-

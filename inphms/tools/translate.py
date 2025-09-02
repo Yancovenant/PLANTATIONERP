@@ -115,6 +115,90 @@ NIL_TRANSLATED_ATTRS = {
 avoid_pattern = re.compile(r"\s*<!DOCTYPE", re.IGNORECASE | re.MULTILINE | re.UNICODE)
 space_pattern = re.compile(r"[\s\uFEFF]*")  # web_editor uses \uFEFF as ZWNBSP
 
+
+def get_text_alias(source: str, *args, **kwargs):
+    assert not (args and kwargs)
+    assert isinstance(source, str)
+    module, lang = _get_translation_source(1)
+    return get_translation(module, lang, source, args or kwargs)
+
+@functools.total_ordering
+class LazyGettext:
+    """ Lazy code translated term.
+
+    Similar to get_text_alias but the translation lookup will be done only at
+    __str__ execution.
+    This eases the search for terms to translate as lazy evaluated strings
+    are declared early.
+
+    A code using translated global variables such as:
+
+    ```
+    _lt = LazyTranslate(__name__)
+    LABEL = _lt("User")
+
+    def _compute_label(self):
+        env = self.with_env(lang=self.partner_id.lang).env
+        self.user_label = env._(LABEL)
+    ```
+
+    works as expected (unlike the classic get_text_alias implementation).
+    """
+
+    __slots__ = ('_args', '_default_lang', '_module', '_source')
+
+    def __init__(self, source, *args, _module='', _default_lang='', **kwargs):
+        assert not (args and kwargs)
+        assert isinstance(source, str)
+        self._source = source
+        self._args = args or kwargs
+        self._module = get_translated_module(_module or 2)
+        self._default_lang = _default_lang
+
+    def _translate(self, lang: str = '') -> str:
+        module, lang = _get_translation_source(2, self._module, lang, default_lang=self._default_lang)
+        return get_translation(module, lang, self._source, self._args)
+
+    def __repr__(self):
+        """ Show for the debugger"""
+        args = {'_module': self._module, '_default_lang': self._default_lang, '_args': self._args}
+        return f"_lt({self._source!r}, **{args!r})"
+
+    def __str__(self):
+        """ Translate."""
+        return self._translate()
+
+    def __eq__(self, other):
+        """ Prevent using equal operators
+
+        Prevent direct comparisons with ``self``.
+        One should compare the translation of ``self._source`` as ``str(self) == X``.
+        """
+        raise NotImplementedError()
+
+    def __hash__(self):
+        raise NotImplementedError()
+
+    def __lt__(self, other):
+        raise NotImplementedError()
+
+    def __add__(self, other):
+        if isinstance(other, str):
+            return self._translate() + other
+        elif isinstance(other, LazyGettext):
+            return self._translate() + other._translate()
+        return NotImplemented
+
+    def __radd__(self, other):
+        if isinstance(other, str):
+            return other + self._translate()
+        return NotImplemented
+
+_ = get_text_alias
+_lt = LazyGettext
+
+
+
 def get_locales(lang=None):
     if lang is None:
         lang = locale.getlocale()[0]

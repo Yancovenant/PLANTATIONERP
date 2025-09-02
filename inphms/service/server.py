@@ -55,8 +55,12 @@ except ImportError:
     setproctitle = lambda x: None
 
 import inphms
-from inphms.tools import config
+from inphms.modules import get_modules
 from inphms.modules.registry import Registry
+from inphms.release import nt_service_name
+from inphms.tools import config
+# from inphms.tools.cache import log_ormcache_stats
+# from inphms.tools.misc import stripped_sys_argv, dumpstacks
 from inphms.tools.misc import dumpstacks
 
 _logger = logging.getLogger(__name__)

@@ -55,7 +55,7 @@ _logger = logging.getLogger(__name__)
 
 MAX_FIXPOINT_ITERATIONS = 10
 
-# DONE
+
 class NewId:
     """ Pseudo-ids for new records, encapsulating an optional origin id (actual
         record id) and an optional reference (any value).
@@ -261,6 +261,47 @@ class Meta(type):
                 attrs[key] = value
 
         return type.__new__(meta, name, bases, attrs)
+
+
+# The following attributes are used, and reflected on wrapping methods:
+#  - method._constrains: set by @constrains, specifies constraint dependencies
+#  - method._depends: set by @depends, specifies compute dependencies
+#  - method._returns: set by @returns, specifies return model
+#  - method._onchange: set by @onchange, specifies onchange fields
+#  - method.clear_cache: set by @ormcache, used to clear the cache
+#  - method._ondelete: set by @ondelete, used to raise errors for unlink operations
+#
+# On wrapping method only:
+#  - method._api: decorator function, used for re-applying decorator
+#
+
+def attrsetter(attr, value):
+    """ Return a function that sets ``attr`` on its argument and returns it. """
+    return lambda method: setattr(method, attr, value) or method
+
+def depends(*args: str) -> Callable[[T], T]:
+    """ Return a decorator that specifies the field dependencies of a "compute"
+        method (for new-style function fields). Each argument must be a string
+        that consists in a dot-separated sequence of field names::
+
+            pname = fields.Char(compute='_compute_pname')
+
+            @api.depends('partner_id.name', 'partner_id.is_company')
+            def _compute_pname(self):
+                for record in self:
+                    if record.partner_id.is_company:
+                        record.pname = (record.partner_id.name or "").upper()
+                    else:
+                        record.pname = record.partner_id.name
+
+        One may also pass a single function as argument. In that case, the
+        dependencies are given by calling the function with the field's model.
+    """
+    if args and callable(args[0]):
+        args = args[0]
+    elif any('id' in arg.split('.') for arg in args):
+        raise NotImplementedError("Compute method cannot depend on field 'id'.")
+    return attrsetter('_depends', args)
 
 
 _create_logger = logging.getLogger(__name__ + '.create')

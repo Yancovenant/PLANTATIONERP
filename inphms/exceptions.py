@@ -65,25 +65,25 @@ class ValidationError(UserError):
     """
 
 
-# class CacheMiss(KeyError):
-#     """Missing value(s) in cache.
+class CacheMiss(KeyError):
+    """Missing value(s) in cache.
 
-#     .. admonition:: Example
+    .. admonition:: Example
 
-#         When you try to read a value in a flushed cache.
-#     """
+        When you try to read a value in a flushed cache.
+    """
 
-#     def __init__(self, record, field):
-#         super().__init__("%r.%s" % (record, field.name))
+    def __init__(self, record, field):
+        super().__init__("%r.%s" % (record, field.name))
 
 
-# class MissingError(UserError):
-#     """Missing record(s).
+class MissingError(UserError):
+    """Missing record(s).
 
-#     .. admonition:: Example
+    .. admonition:: Example
 
-#         When you try to write on a deleted record.
-#     """
+        When you try to write on a deleted record.
+    """
 
 
 # class RedirectWarning(Exception):

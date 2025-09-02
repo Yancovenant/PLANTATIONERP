@@ -546,7 +546,7 @@ class IrQWeb(models.AbstractModel):
         irQweb = self.with_context(**options)._prepare_environment(values)
 
         safe_eval.check_values(values)
-
+        
         template_functions, def_name = irQweb._compile(template)
         render_template = template_functions[def_name]
         rendering = render_template(irQweb, values)

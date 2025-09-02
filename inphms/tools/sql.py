@@ -12,11 +12,13 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # from inphms.fields import Field
+    from inphms.fields import Field
     from collections.abc import Iterable
 
 import psycopg2
 import psycopg2.sql as pgsql
+
+# from .misc import named_to_positional_printf
 
 __all__ = [
     'SQL',
@@ -177,3 +179,22 @@ class SQL:
             return cls(f'"{name}"', to_flush=to_flush)
         assert subname.isidentifier() or IDENT_RE.match(subname), f"{subname!r} invalid for SQL.identifier()"
         return cls(f'"{name}"."{subname}"', to_flush=to_flush)
+
+
+
+def pg_varchar(size=0):
+    """ Returns the VARCHAR declaration for the provided size:
+
+    * If no size (or an empty or negative size is provided) return an
+      'infinite' VARCHAR
+    * Otherwise return a VARCHAR(n)
+
+    :param int size: varchar size, optional
+    :rtype: str
+    """
+    if size:
+        if not isinstance(size, int):
+            raise ValueError("VARCHAR parameter should be an int, got %s" % type(size))
+        if size > 0:
+            return 'VARCHAR(%d)' % size
+    return 'VARCHAR'
