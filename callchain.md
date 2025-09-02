@@ -232,7 +232,7 @@ python inphms-bin --<config-params>
                                                                                                                                                                         - self.sid = sid
                                                                                                                                                 - else #`root.session_store.get(sid) -- root.session_store == FilesystemSessionStore`:
                                                                                                                                                     - `FilesystemSessionStore.get(sid)`:
-                                                                                                                                                        - # NOT DONE
+                                                                                                                                                        - - NOT DONE
                                                                                                                                                     - session.sid = sid
                                                                                                                                                 - session -- setdefault() attr. + default_lang == self.default_lang()
                                                                                                                                                 - if session.db and `db_filter([session.db], host=host)`:
@@ -264,7 +264,7 @@ python inphms-bin --<config-params>
                                                                                                                                                             - self.should_rotate = True
                                                                                                                                                             - if request and `request.env`:
                                                                                                                                                                 - `request.env['ir.http']._post_logout()`:
-                                                                                                                                                                    - 
+                                                                                                                                                                    - not done
                                                                                                                                                     - session.db = dbname
                                                                                                                                                 - session.is_dirty = False
                                                                                                                                                 - Return session, dbname
@@ -336,7 +336,7 @@ python inphms-bin --<config-params>
                                                                                                                                                     - threading.current_thread().dbname = self.registry.db_name
                                                                                                                                                     - self.env = inphms.api.Environment(cr_readwrite, self.session.uid, self.session.context)
                                                                                                                                                         - `inphms.api.Environment(cr_readwrite, self.session.uid, self.session.context)`:
-                                                                                                                                                            - 
+                                                                                                                                                            - not done
                                                                                                                                                     - try:
                                                                                                                                                         - rule, args = self.registry['ir.http']._match(self.httprequest.path)
                                                                                                                                                     - except NotFound:
@@ -360,16 +360,16 @@ python inphms-bin --<config-params>
                                                                                                                                                                         }
                                                                                                                                                                 - response = `self.registry['ir.http']._serve_fallback()`:
                                                                                                                                                                     - `self.registry['ir.http']._serve_fallback()`:
-                                                                                                                                                                        - 
+                                                                                                                                                                        - not done
                                                                                                                                                                 - if response:
                                                                                                                                                                     - `self.registry['ir.http']._post_dispatch(response)`:
-                                                                                                                                                                        - 
+                                                                                                                                                                        - not done
                                                                                                                                                                     return response
                                                                                                                                                                 - no_fallback = NotFound()
                                                                                                                                                                 - no_fallback.__context__ = not_found
                                                                                                                                                                 - no_fallback.error_response = `self.registry['ir.http']._handle_error(no_fallback)`
                                                                                                                                                                     - `self.registry['ir.http']._handle_error(no_fallback)`:
-                                                                                                                                                                        - 
+                                                                                                                                                                        - not done
                                                                                                                                                                 - raise no_fallback
                                                                                                                                                             - `self._transactioning(functools.partial(self._serve_ir_http_fallback, not_found), readonly=True)`:
                                                                                                                                                                 - for readonly_cr in (True, False) if readonly else (False,):
@@ -578,4 +578,65 @@ python inphms-bin --<config-params>
                                             - `ir_cron._process_jobs(db_name)` @see inphms/addons/base/models/ir_cron.py
                                         - `cr._cnx.close()` @see sql_db.py
 
+
+#### CONFIG Entry Point
 - `config = configmanager() == inphms.tools.config`
+
+#### ORM Entry Point
+- `load_server_wide_modules()`:
+    - `load_inphms_module(m)`:
+        - `__import__(qualname)`:
+            - What happens here is that it would import anything inside inphms.addons.__path__
+            - Especially the models folders. (ORM/MODEL Entry Point)
+            - ---
+            - CONTINUE AS inphms.addons.base
+            - ---
+            - `__new__` is being called
+            - `class ir_cron(models.Model)`:
+                - _name = 'ir.cron'
+                - _order = 'cron_name'
+                - _description = 'Scheduled Actions'
+                - _allow_sudo_commands = False
+                - _sql_constraints = 
+                    ```python
+                        [
+                            (
+                                'check_strictly_positive_interval',
+                                'CHECK(interval_number > 0)',
+                                'The interval number must be a strictly positive number.'
+                            ),
+                        ]
+                    ```
+                - `models.Model(AbstractModel)`:
+                    - _auto = True
+                    - _register = False
+                    - _abstract = False
+                    - _transient = False
+                    - `models.AbstractModel == BaseModel(metaclass=MetaModel)`:
+                        - __slots__ = ['env', '_ids', '_prefetch_ids']
+                        - env: api.Environment
+                        - id: IdType | typing.Literal[False]
+                        - display_name: str | typing.Literal[False]
+                        - pool: Registry
+                        - _fields: dict[str, Field]
+                        - _module = None
+                        - _custom = False
+                        - _inherit: str | list[str] | tuple[str, ...] = ()
+                        - _inherits = frozendict()
+                        - _table = None
+                        - _table_query = None
+                        - _sql_constraints: list[tuple[str, str, str]] = []
+                        - _rec_name = None
+                        - _rec_names_search: list[str] | None = None
+                        - _order = 'id'
+                        - _parent_name = 'parent_id'
+                        - _parent_store = False
+                        - _active_name = None
+                        - _fold_name = 'fold'
+                        - _translate = True
+                        - _check_company_auto = False
+                        - _depends = frozendict()
+                        - _transient_max_count = lazy_classproperty(lambda _: config.get('osv_memory_count_limit'))
+                        - _transient_max_hours = lazy_classproperty(lambda _: config.get('transient_age_limit'))
+                    - `metaclass=MetaModel`:
+                        - 

@@ -355,30 +355,30 @@ def is_definition_class(cls):
 class BaseModel(metaclass=MetaModel):
     """Base class for Inphms models.
 
-    Inphms models are created by inheriting one of the following:
+        Inphms models are created by inheriting one of the following:
 
-    *   :class:`Model` for regular database-persisted models
+        *   :class:`Model` for regular database-persisted models
 
-    *   :class:`TransientModel` for temporary data, stored in the database but
-        automatically vacuumed every so often
+        *   :class:`TransientModel` for temporary data, stored in the database but
+            automatically vacuumed every so often
 
-    *   :class:`AbstractModel` for abstract super classes meant to be shared by
-        multiple inheriting models
+        *   :class:`AbstractModel` for abstract super classes meant to be shared by
+            multiple inheriting models
 
-    The system automatically instantiates every model once per database. Those
-    instances represent the available models on each database, and depend on
-    which modules are installed on that database. The actual class of each
-    instance is built from the Python classes that create and inherit from the
-    corresponding model.
+        The system automatically instantiates every model once per database. Those
+        instances represent the available models on each database, and depend on
+        which modules are installed on that database. The actual class of each
+        instance is built from the Python classes that create and inherit from the
+        corresponding model.
 
-    Every model instance is a "recordset", i.e., an ordered collection of
-    records of the model. Recordsets are returned by methods like
-    :meth:`~.browse`, :meth:`~.search`, or field accesses. Records have no
-    explicit representation: a record is represented as a recordset of one
-    record.
+        Every model instance is a "recordset", i.e., an ordered collection of
+        records of the model. Recordsets are returned by methods like
+        :meth:`~.browse`, :meth:`~.search`, or field accesses. Records have no
+        explicit representation: a record is represented as a recordset of one
+        record.
 
-    To create a class that should not be instantiated,
-    the :attr:`~inphms.models.BaseModel._register` attribute may be set to False.
+        To create a class that should not be instantiated,
+        the :attr:`~inphms.models.BaseModel._register` attribute may be set to False.
     """
     __slots__ = ['env', '_ids', '_prefetch_ids']
 
@@ -769,7 +769,7 @@ class BaseModel(metaclass=MetaModel):
     #
     # Cache and recomputation management
     #
-    
+
 
 collections.abc.Set.register(BaseModel)
 # not exactly true as BaseModel doesn't have index or count

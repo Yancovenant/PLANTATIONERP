@@ -97,3 +97,29 @@ posix = linux/macos/freebsd
             print(doubles.__name__)   # doubles
             print(doubles.__doc__)    # This is Multi level decorator
         ```
+    - done
+
+## PYTHON MRO (Method Resolution Order)
+- in order :
+    - __new__
+        - ```python
+            class A:
+                def __new__(cls):
+                    print("new called")
+                    return super().__new__(cls)
+            class B(A): ## <- __new__ called # output : new called
+                pass
+          ```
+    - __init__
+    - __call__
+    - __getattr__
+    - __setattr__
+    - __delattr__
+    - __getattribute__
+    - __setattribute__
+
+- metaclass:
+    - is used to control the creation of class process. e.g __new__
+
+
+
