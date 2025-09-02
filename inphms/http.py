@@ -162,7 +162,7 @@ from .service import security, model as service_model
 from .tools import (
     parse_version, config, file_path,
     profiler, unique, consteq,
-    get_lang, json_default, exception_to_unicode
+    get_lang, json_default
 )
 from .tools.func import lazy_property, filter_kwargs
 from .tools.misc import submap

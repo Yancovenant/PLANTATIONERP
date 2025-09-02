@@ -38,18 +38,21 @@ import babel
 import babel.dates
 import markupsafe
 import pytz
-# from lxml import etree, objectify
+from lxml import etree, objectify
 
 import inphms
 import inphms.addons
 
 from .config import config
+# from .float_utils import float_round
+# from .which import which
 
 K = typing.TypeVar('K')
 T = typing.TypeVar('T')
 if typing.TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
     from inphms.api import Environment
+    from inphms.addons.base.models.res_lang import LangData
 
     P = typing.TypeVar('P')
 
@@ -62,9 +65,30 @@ __all__ = [
     'DotDict',
     'consteq',
     'OrderedSet',
+    'get_lang',
 ]
 
 _logger = logging.getLogger(__name__)
+
+# List of etree._Element subclasses that we choose to ignore when parsing XML.
+# We include the *Base ones just in case, currently they seem to be subclasses of the _* ones.
+SKIPPED_ELEMENT_TYPES = (etree._Comment, etree._ProcessingInstruction, etree.CommentBase, etree.PIBase, etree._Entity)
+
+# Configure default global parser
+etree.set_default_parser(etree.XMLParser(resolve_entities=False))
+default_parser = etree.XMLParser(resolve_entities=False, remove_blank_text=True)
+default_parser.set_element_class_lookup(objectify.ObjectifyElementClassLookup())
+objectify.set_default_parser(default_parser)
+
+NON_BREAKING_SPACE = u'\N{NO-BREAK SPACE}'
+
+
+class Sentinel(enum.Enum):
+    """Class for typing parameters with a sentinel as a default"""
+    SENTINEL = -1
+
+
+SENTINEL = Sentinel.SENTINEL
 
 # ----------------------------------------------------------
 # File paths
@@ -503,3 +527,24 @@ class OrderedSet(MutableSet[T], typing.Generic[T]):
 
     def intersection(self, *others):
         return reduce(OrderedSet.__and__, others, self)
+
+def get_lang(env: Environment, lang_code: str | None = None) -> LangData:
+    """
+    Retrieve the first lang object installed, by checking the parameter lang_code,
+    the context and then the company. If no lang is installed from those variables,
+    fallback on english or on the first lang installed in the system.
+
+    :param env:
+    :param str lang_code: the locale (i.e. en_US)
+    :return LangData: the first lang found that is installed on the system.
+    """
+    langs = [code for code, _ in env['res.lang'].get_installed()]
+    lang = 'en_US' if 'en_US' in langs else langs[0]
+    if lang_code and lang_code in langs:
+        lang = lang_code
+    elif (context_lang := env.context.get('lang')) in langs:
+        lang = context_lang
+    elif (company_lang := env.user.with_context(lang='en_US').company_id.partner_id.lang) in langs:
+        lang = company_lang
+    return env['res.lang']._get_data(code=lang)
+

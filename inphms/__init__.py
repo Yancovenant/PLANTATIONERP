@@ -40,7 +40,7 @@ _monkeypatches.patch_all()
 # from . import upgrade  # this namespace must be imported first
 from . import addons
 # from . import conf
-# from . import loglevels
+from . import loglevels
 # from . import osv
 from . import release
 from . import netsvc
