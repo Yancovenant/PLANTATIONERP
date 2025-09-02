@@ -119,7 +119,11 @@ posix = linux/macos/freebsd
     - __setattribute__
 
 - metaclass:
-    - is used to control the creation of class process. e.g __new__
+    - is used to control the creation of class process. e.g __new__ + __init__ is always being called.
+
+- parent inheritance:
+    - parent inheritance is a way to inherit the properties and methods of a parent class.
+    - the child class will inherit all the properties and methods of the parent class.
 
 
 

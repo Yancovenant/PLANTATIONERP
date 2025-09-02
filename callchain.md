@@ -638,5 +638,21 @@ python inphms-bin --<config-params>
                         - _depends = frozendict()
                         - _transient_max_count = lazy_classproperty(lambda _: config.get('osv_memory_count_limit'))
                         - _transient_max_hours = lazy_classproperty(lambda _: config.get('transient_age_limit'))
-                    - `metaclass=MetaModel`:
-                        - 
+                    - `metaclass=MetaModel(api.Meta)`:
+                        - `__new__` is being called:
+                            - setdefault attrs:
+                                - __slots__
+                                - _field_definitions
+                            - if attrs.get('_register', True):
+                                - if `_module` not in attrs:
+                                    - module = attrs['__module__']
+                                    - assert module.startswith('inphms.addons.'), f"Invalid import of {module}.{name}, it should start with 'inphms.addons'."
+                                    - attrs['_module'] = module.split('.')[2]
+                                - inherit = attrs.get('_inherit', ()) or empty () tuple.
+                                - if isinstance(inherit, str):
+                                    - attrs['_inherit'] = [inherit]
+                                if '_name' not in attrs:
+                                    - attrs['_name'] = inherit[0] if len(inherit) == 1 else name
+                            - return `super().__new__(meta, name, bases, attrs)`:
+                                - `api.Meta.__new__(meta, name, bases, attrs)`:
+                                    - parent = type.__new__(meta, name, bases, {})

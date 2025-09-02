@@ -244,7 +244,7 @@ def propagate(method1, method2):
                 setattr(method2, attr, getattr(method1, attr))
     return method2
 
-# DONE
+
 class Meta(type):
     """ Metaclass that automatically decorates traditional-style methods by
         guessing their API. It also implements the inheritance of the
