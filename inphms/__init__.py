@@ -38,7 +38,7 @@ _monkeypatches.patch_all()
 # Imports
 # ----------------------------------------------------------
 # from . import upgrade  # this namespace must be imported first
-# from . import addons
+from . import addons
 # from . import conf
 # from . import loglevels
 # from . import osv

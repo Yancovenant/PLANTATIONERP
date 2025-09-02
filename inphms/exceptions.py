@@ -27,6 +27,7 @@ class UserError(Exception):
         """
         super().__init__(message)
 
+
 class AccessError(UserError):
     """Access rights error.
 
@@ -34,6 +35,7 @@ class AccessError(UserError):
 
         When you try to read a record that you are not allowed to.
     """
+
 
 class AccessDenied(UserError):
     """Login/password error.
@@ -53,6 +55,7 @@ class AccessDenied(UserError):
         self.__cause__ = None
         self.traceback = ('', '', '')
 
+
 class ValidationError(UserError):
     """Violation of python constraints.
 
@@ -60,3 +63,39 @@ class ValidationError(UserError):
 
         When you try to create a new user with a login which already exist in the db.
     """
+
+
+# class CacheMiss(KeyError):
+#     """Missing value(s) in cache.
+
+#     .. admonition:: Example
+
+#         When you try to read a value in a flushed cache.
+#     """
+
+#     def __init__(self, record, field):
+#         super().__init__("%r.%s" % (record, field.name))
+
+
+# class MissingError(UserError):
+#     """Missing record(s).
+
+#     .. admonition:: Example
+
+#         When you try to write on a deleted record.
+#     """
+
+
+# class RedirectWarning(Exception):
+    # """ Warning with a possibility to redirect the user instead of simply
+    # displaying the warning message.
+
+    # :param str message: exception message and frontend modal content
+    # :param int action_id: id of the action where to perform the redirection
+    # :param str button_text: text to put on the button that will trigger
+    #     the redirection.
+    # :param dict additional_context: parameter passed to action_id.
+    #        Can be used to limit a view to active_ids for example.
+    # """
+    # def __init__(self, message, action, button_text, additional_context=None):
+    #     super().__init__(message, action, button_text, additional_context)
