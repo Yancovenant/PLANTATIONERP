@@ -2438,7 +2438,7 @@ class Application:
             def fake_start_response(status, headers):
                 return
             ProxyFix(fake_app)(environ, fake_start_response)
-
+        
         with HTTPRequest(environ) as httprequest:
             request = Request(httprequest)
             _request_stack.push(request)

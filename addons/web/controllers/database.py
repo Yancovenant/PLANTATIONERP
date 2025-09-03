@@ -53,7 +53,7 @@ class Database(http.Controller):
         def load(template_name):
             fromstring = html.document_fromstring if template_name == 'database_manager' else html.fragment_fromstring
             return (fromstring(templates[template_name]), template_name)
-
+    
         return qweb_render('database_manager', d, load)
 
     @http.route('/web/database/selector', type='http', auth="none")

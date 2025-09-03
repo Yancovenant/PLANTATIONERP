@@ -400,7 +400,7 @@ from inphms.tools.lru import LRU
 from inphms.tools.image import image_data_uri, FILETYPE_BASE64_MAGICWORD
 from inphms.http import request
 from inphms.tools.profiler import QwebTracker
-# from inphms.exceptions import UserError, AccessDenied, AccessError, MissingError, ValidationError
+from inphms.exceptions import UserError, AccessDenied, AccessError, MissingError, ValidationError
 
 # from inphms.addons.base.models.assetsbundle import AssetsBundle
 # from inphms.tools.constants import SCRIPT_EXTENSIONS, STYLE_EXTENSIONS, TEMPLATE_EXTENSIONS
@@ -476,6 +476,11 @@ SPECIAL_DIRECTIVES = {'t-translation', 't-ignore', 't-title'}
 # Name of the variable to insert the content in t-call in the template.
 # The slot will be replaced by the `t-call` tag content of the caller.
 T_CALL_SLOT = '0'
+
+
+def indent_code(code, level):
+    """Indent the code to respect the python syntax."""
+    return textwrap.indent(textwrap.dedent(code).strip(), ' ' * 4 * level)
 
 
 def keep_query(*keep_params, **additional_params):
@@ -554,11 +559,34 @@ class IrQWeb(models.AbstractModel):
 
         return Markup(result)
     
+
+    # The cache does not need to be invalidated if the 'base_key_cache'
+    # in '_compile' method contains the write_date of all inherited views.
+    @tools.conditional(
+        'xml' not in tools.config['dev_mode'],
+        tools.ormcache('cache_key', cache='templates.cached_values'),
+    )
+    def _get_cached_values(self, cache_key, get_value):
+        """ generate value from the function if the result is not cached. """
+        return get_value()
+
+    def _load_values(self, cache_key, get_value, loaded_values=None):
+        """ generate value from the function if the result is not cached. """
+        if not cache_key:
+            return get_value()
+        value = loaded_values and loaded_values.get(cache_key)
+        if not value:
+            value = self._get_cached_values(cache_key, get_value)
+        if loaded_values is not None:
+            loaded_values[cache_key] = value
+        return value
+
+
     # assume cache will be invalidated by third party on write to ir.ui.view
     def _get_template_cache_keys(self):
         """ Return the list of context keys to use for caching ``_compile``. """
         return ['lang', 'inherit_branding', 'inherit_branding_auto', 'edit_translations', 'profile']
-    
+
     @tools.conditional(
         'xml' not in tools.config['dev_mode'],
         tools.ormcache('template', 'tuple(self.env.context.get(k) for k in self._get_template_cache_keys())', cache='templates'),
@@ -570,6 +598,225 @@ class IrQWeb(models.AbstractModel):
         except Exception:
             return None
     
+    def _generate_code(self, template):
+        """ Compile the given template into a rendering function (generator)::
+
+            render_template(qweb, values)
+            This method can be called only by the IrQweb `_render` method or by
+            the compiled code of t-call from an other template.
+
+            An `options` dictionary is created and attached to the function. It
+            contains rendering options that are part of the cache key in
+            addition to template references.
+
+            where ``qweb`` is a QWeb instance and ``values`` are the values to
+            render.
+
+            :returns: tuple containing code, options and main method name
+        """
+        if not isinstance(template, (int, str, etree._Element)):
+            template = str(template)
+        # The `compile_context`` dictionary includes the elements used for the
+        # cache key to which are added the template references as well as
+        # technical information useful for generating the function. This
+        # dictionary is only used when compiling the template.
+        compile_context = self.env.context.copy()
+
+        try:
+            element, document, ref = self._get_template(template)
+        except (ValueError, UserError) as e:
+            # return the error function if the template is not found or fail
+            message = str(e)
+            code = indent_code(f"""
+                def not_found_template(self, values):
+                    if self.env.context.get('raise_if_not_found', True):
+                        raise {e.__class__.__name__}({message!r})
+                    warning('Cannot load template %s: %s', {template!r}, {message!r})
+                    return ''
+                template_functions = {{'not_found_template': not_found_template}}
+            """, 0)
+            return (code, {}, 'not_found_template')
+
+        compile_context.pop('raise_if_not_found', None)
+
+        # reference to get xml and etree (usually the template ID)
+        compile_context['ref'] = ref
+        # reference name or key to get xml and etree (usually the template XML ID)
+        compile_context['ref_name'] = element.attrib.pop('t-name', template if isinstance(template, str) and '<' not in template else None)
+        # str xml of the reference template used for compilation. Useful for debugging, dev mode and profiling.
+        compile_context['ref_xml'] = document
+        # Identifier used to call `_compile`
+        compile_context['template'] = template
+        # Root of the etree which will be processed during compilation.
+        compile_context['root'] = element.getroottree()
+        # Reference to the last node being compiled. It is mainly used for debugging and displaying error messages.
+        compile_context['_qweb_error_path_xml'] = None
+
+        compile_context['nsmap'] = {
+            ns_prefix: str(ns_definition)
+            for ns_prefix, ns_definition in compile_context.get('nsmap', {}).items()
+        }
+
+        # The options dictionary includes cache key elements and template
+        # references. It will be attached to the generated function. This
+        # dictionary is only there for logs, performance or test information.
+        # The values of these `options` cannot be changed and must always be
+        # identical in `context` and `self.env.context`.
+        options = {k: compile_context.get(k) for k in self._get_template_cache_keys() + ['ref', 'ref_name', 'ref_xml']}
+
+        # generate code
+
+        def_name = TO_VARNAME_REGEXP.sub(r'_', f'template_{ref}')
+
+        name_gen = count()
+        compile_context['make_name'] = lambda prefix: f"{def_name}_{prefix}_{next(name_gen)}"
+
+        try:
+            if element.text:
+                element.text = FIRST_RSTRIP_REGEXP.sub(r'\2', element.text)
+
+            compile_context['template_functions'] = {}
+
+            compile_context['_text_concat'] = []
+            self._append_text("", compile_context) # To ensure the template function is a generator and doesn't become a regular function
+            compile_context['template_functions'][f'{def_name}_content'] = (
+                [f"def {def_name}_content(self, values):"]
+                + self._compile_node(element, compile_context, 2)
+                + self._flush_text(compile_context, 2, rstrip=True))
+
+            compile_context['template_functions'][def_name] = [indent_code(f"""
+                def {def_name}(self, values):
+                    try:
+                        if '__qweb_loaded_values' not in values:
+                            values['__qweb_loaded_values'] = {{}}
+                            values['__qweb_root_values'] = values.copy()
+                            values['xmlid'] = {options['ref_name']!r}
+                            values['viewid'] = {options['ref']!r}
+                        values['__qweb_loaded_values'].update(template_functions)
+
+                        yield from {def_name}_content(self, values)
+                    except QWebException:
+                        raise
+                    except Exception as e:
+                        if isinstance(e, TransactionRollbackError):
+                            raise
+                        if isinstance(e, ReadOnlySqlTransaction):
+                            raise
+                        raise QWebException("Error while render the template",
+                            self, template, ref={compile_context['ref']!r}, code=code) from e
+                    """, 0)]
+        except QWebException:
+            raise
+        except Exception as e:
+            raise QWebException("Error when compiling xml template",
+                self, template, ref=compile_context['ref'], path_xml=compile_context['_qweb_error_path_xml']) from e
+
+        code_lines = ['code = None']
+        code_lines.append(f'template = {(document if isinstance(template, etree._Element) else template)!r}')
+        code_lines.append('template_functions = {}')
+
+        for lines in compile_context['template_functions'].values():
+            code_lines.extend(lines)
+
+        for name in compile_context['template_functions']:
+            code_lines.append(f'template_functions[{name!r}] = {name}')
+
+        code = '\n'.join(code_lines)
+        code += f'\n\ncode = {code!r}'
+
+        return (code, options, def_name)
+    
+    # read and load input template
+
+    def _load(self, ref):
+        """
+        Load the template referenced by ``ref``.
+
+        :returns: The loaded template (as string or etree) and its
+            identifier
+        :rtype: Tuple[Union[etree, str], Optional[str, int]]
+        """
+        IrUIView = self.env['ir.ui.view'].sudo()
+        view = IrUIView._get(ref)
+        template = IrUIView._read_template(view.id)
+        etree_view = etree.fromstring(template)
+
+        xmlid = view.key or ref
+        if isinstance(ref, int):
+            domain = [('model', '=', 'ir.ui.view'), ('res_id', '=', view.id)]
+            model_data = self.env['ir.model.data'].sudo().search_read(domain, ['module', 'name'], limit=1)
+            if model_data:
+                xmlid = f"{model_data[0]['module']}.{model_data[0]['name']}"
+
+        # QWeb's ``_read_template`` will check if one of the first children of
+        # what we send to it has a "t-name" attribute having ``ref`` as value
+        # to consider it has found it. As it'll never be the case when working
+        # with view ids or children view or children primary views, force it here.
+        if view.inherit_id is not None:
+            for node in etree_view:
+                if node.get('t-name') == str(ref) or node.get('t-name') == str(view.key):
+                    node.attrib.pop('name', None)
+                    node.attrib.pop('id', None)
+                    etree_view = node
+                    break
+        etree_view.set('t-name', str(xmlid))
+        return (etree_view, view.id)
+
+    def _get_template(self, template):
+        """ Retrieve the given template, and return it as a tuple ``(etree,
+        xml, ref)``, where ``element`` is an etree, ``document`` is the
+        string document that contains ``element``, and ``ref`` if the uniq
+        reference of the template (id, t-name or template).
+
+        :param template: template identifier or etree
+        """
+        assert template not in (False, None, ""), "template is required"
+
+        # template is an xml etree already
+        if isinstance(template, etree._Element):
+            element = template
+            document = etree.tostring(template, encoding='unicode')
+            ref = None
+        # template is xml as string
+        elif isinstance(template, str) and '<' in template:
+            raise ValueError('Inline templates must be passed as `etree` documents')
+
+        # template is (id or ref) to a database stored template
+        else:
+            try:
+                ref_alias = int(template)  # e.g. <t t-call="33"/>
+            except ValueError:
+                ref_alias = template  # e.g. web.layout
+
+            doc_or_elem, ref = self._load(ref_alias) or (None, None)
+            if doc_or_elem is None:
+                raise ValueError(f"Can not load template: {ref_alias!r}")
+            if isinstance(doc_or_elem, etree._Element):
+                element = doc_or_elem
+                document = etree.tostring(doc_or_elem, encoding='unicode')
+            elif isinstance(doc_or_elem, str):
+                element = etree.fromstring(doc_or_elem)
+                document = doc_or_elem
+            else:
+                raise TypeError(f"Loaded template {ref!r} should be a string.")
+
+        # return etree, document and ref, or try to find the ref
+        if ref:
+            return (element, document, ref)
+
+        # <templates>
+        #   <template t-name=... /> <!-- return ONLY this element -->
+        #   <template t-name=... />
+        # </templates>
+        for node in element.iter():
+            ref = node.get('t-name')
+            if ref:
+                return (node, document, ref)
+
+        # use the document itself as ref when no t-name was found
+        return (element, document, document)
+
+
     @QwebTracker.wrap_compile
     def _compile(self, template):
         if isinstance(template, etree._Element):
@@ -583,6 +830,41 @@ class IrQWeb(models.AbstractModel):
         if ref:
             base_key_cache = self._get_cache_key(tuple([ref] + [self.env.context.get(k) for k in self._get_template_cache_keys()]))
         self = self.with_context(__qweb_base_key_cache=base_key_cache)
+
+        # generate the template functions and the root function name
+        def generate_functions():
+            code, options, def_name = self._generate_code(template)
+            if self.env.context.get('profile'):
+                ref_value = None
+                with contextlib.suppress(ValueError, TypeError):
+                    ref_value = int(options.get('ref'))
+                profile_options = {
+                    'ref': ref_value,
+                    'ref_xml': options.get('ref_xml') and str(options['ref_xml']) or None,
+                }
+            else:
+                profile_options = None
+            code = '\n'.join([
+                "def generate_functions():",
+                "    template_functions = {}",
+                indent_code(code, 1),
+                f"    template_functions['options'] = {profile_options!r}",
+                "    return template_functions",
+            ])
+
+            try:
+                compiled = compile(code, f"<{ref}>", 'exec')
+                globals_dict = self.__prepare_globals()
+                globals_dict['__builtins__'] = globals_dict # So that unknown/unsafe builtins are never added.
+                unsafe_eval(compiled, globals_dict)
+                return globals_dict['generate_functions'](), def_name
+            except QWebException:
+                raise
+            except Exception as e:
+                raise QWebException("Error when compiling xml template",
+                    self, template, code=code, ref=ref) from e
+
+        return self._load_values(base_key_cache, generate_functions)
 
     # values for running time
 
@@ -650,6 +932,16 @@ class IrQWeb(models.AbstractModel):
         elif 'disable-t-cache' in debug:
             context['is_t_cache_disabled'] = True
         return self.with_context(**context)
+
+    # helpers for compilation
+
+    def _append_text(self, text, compile_context):
+        """ Add an item (converts to a string) to the list.
+            This will be concatenated and added during a call to the
+            `_flush_text` method. This makes it possible to return only one
+            yield containing all the parts."""
+        compile_context['_text_concat'].append(self._compile_to_str(text))
+
 
 def render(template_name, values, load, **options):
     """ Rendering of a qweb template without database and outside the registry.
