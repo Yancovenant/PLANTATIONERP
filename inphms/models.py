@@ -130,7 +130,7 @@ class MetaModel(api.Meta):
                 inherit = attrs['_inherit'] = [inherit]
             if '_name' not in attrs:
                 attrs['_name'] = inherit[0] if len(inherit) == 1 else name
-
+        
         return super().__new__(meta, name, bases, attrs)
 
     def __init__(self, name, bases, attrs):
@@ -348,7 +348,7 @@ READ_GROUP_DISPLAY_FORMAT = {
 # we add them on definition classes that define a model without extending it.
 # This increases the number of fields that are shared across registries.
 
-def is_definition_class(cls):
+def is_definition_class(cls): #ichecked
     """ Return whether ``cls`` is a model definition class. """
     return isinstance(cls, MetaModel) and getattr(cls, 'pool', None) is None
 
@@ -547,6 +547,7 @@ class BaseModel(metaclass=MetaModel):
         .. note::
             The returned recordset has the same prefetch object as ``self``.
         """
+        print("with_env", self.__class__.__name__, env, self._ids, self._prefetch_ids)
         return self.__class__(env, self._ids, self._prefetch_ids)
 
     @api.private

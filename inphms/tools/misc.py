@@ -69,6 +69,8 @@ __all__ = [
     'DEFAULT_SERVER_DATETIME_FORMAT',
     'DEFAULT_SERVER_DATE_FORMAT',
     'DEFAULT_SERVER_TIME_FORMAT',
+    'clean_context',
+    'remove_accents',
 ]
 
 _logger = logging.getLogger(__name__)
@@ -630,3 +632,18 @@ def get_lang(env: Environment, lang_code: str | None = None) -> LangData:
         lang = company_lang
     return env['res.lang']._get_data(code=lang)
 
+def clean_context(context: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """ This function take a dictionary and remove each entry with its key
+    starting with ``default_``
+    """
+    return {k: v for k, v in context.items() if not k.startswith('default_')}
+
+# Inspired by http://stackoverflow.com/questions/517923
+def remove_accents(input_str: str) -> str:
+    """Suboptimal-but-better-than-nothing way to replace accented
+    latin letters by an ASCII equivalent. Will obviously change the
+    meaning of input_str and work only for some cases"""
+    if not input_str:
+        return input_str
+    nkfd_form = unicodedata.normalize('NFKD', input_str)
+    return ''.join(c for c in nkfd_form if not unicodedata.combining(c))

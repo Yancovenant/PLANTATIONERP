@@ -656,3 +656,88 @@ python inphms-bin --<config-params>
                             - return `super().__new__(meta, name, bases, attrs)`:
                                 - `api.Meta.__new__(meta, name, bases, attrs)`:
                                     - parent = type.__new__(meta, name, bases, {})
+                                    - for key, value in list(attrs.items()):
+                                        - if not key.startswith('__') and callable(value):
+                                        - this means, if not private `__dunder__` and it is a `callable()`
+                                            - value = `propagate`(getattr(parent, key, None), value)
+                                            - propagating the `_returns` attribute from method1 to method2.
+                                            - in this case, the parent attribute is method1 and the method2 is child method.
+                                    - return `type.__new__(meta, name, bases, attrs)`
+                        - `__init__` from metaclass is being called:
+                            - if `__init__` in attrs and len(inspect.signature(attrs['__init__']).parameters) != 4:
+                                - log warning
+                            - if not attrs.get('_register', True):
+                                - early return
+                            - if self._module:
+                                - self.module_to_models[self._module].append(self)
+                            - if not self._abstract and self._name not in self._inherit:
+                                - add:
+                                    - `id`
+                                    - `fields.Id(automatic=True)`:
+                                        - `Field.__init__(self, string, **kwargs)`:
+                                            - kwargs['string'] = string || or || SENTINEL == -1 type checking
+                                            - self._sequence = next(_global_seq) <- itertools count()
+                                            - self.args = self._args__ = {key: val for key, val in kwargs.items() if val is not SENTINEL}
+                                        - `Field.__set_name__(self, owner, name)`:
+                                            - owner == Model Class, e.g ir_cron, ResUser, etc.
+                                            - assert issubclass(owner, BaseModel)
+                                            - if is_definition_class(owner):
+                                                - self._module = owner._module
+                                                - owner._field_definitions.append(self)
+                                            - if not self._args__.get('related'):
+                                                - self._direct = True
+                                            - if self._direct or self._toplevel:
+                                                - `self._setup_attrs(owner, name)`:
+                                                    - self._get_attrs(owner, name):
+                                                        - return attrs after checking.
+                                                    - update and handle extra keys.
+                                                - if self._toplevel:
+                                                    - self.__dict__.pop('_args__', None)
+                                                    - self.__dict__.pop('_base_fields', None)
+                                - add_default:
+                                    - `display_name`
+                                    - it does if name not in attrs.
+                                    - then setattrs, else pass.
+                                - if attrs.get('_log_access', self._auto):
+                                    - add_default:
+                                        - `create_uid`
+                                        - `create_date`
+                                        - `write_uid`
+                                        - `write_date`
+                                - ---
+                                - Fields Type
+                                - ---
+                                - `Id(Field[IdType | typing.Literal[False]])`:
+                                    - type = 'integer'
+                                    - column_type = ('int4', 'int4')
+                                    - string = 'ID'
+                                    - store = True
+                                    - readonly = True
+                                    - prefetch = False
+                                - `_String(Field[str | typing.Literal[False]])`:
+                                    - translate = False
+                                    - size = None
+                                    - _related_translate = property(attrgetter('translate'))
+                                    - has `__init__()` which appends `translate` to kwargs.
+                                    - child:
+                                        - `Char(_String)`:
+                                            - type = 'char'
+                                            - trim = True
+                                            - has `_setup_attrs()` which asserts `size` is an integer.
+                                            - has `_column_type()` which returns ('varchar', pg_varchar(self.size))
+                                            - _related_size = property(attrgetter('size'))
+                                            - _related_trim = property(attrgetter('trim'))
+                                            - _description_size = property(attrgetter('size'))
+                                            - _description_trim = property(attrgetter('trim'))
+                                - `_Relational(Field[M], typing.Generic[M])`:
+                                    - relational = True
+                                    - domain = [] == DomainType == List[str | tuple[str, str, typing.Any]]
+                                    - context = {} == ContextType == Mapping[str, typing.Any]
+                                    - check_company = False
+                                    - has `_related_domain()` which returns a callable.
+                                    - _related_context = property(attrgetter('context'))
+                                    - _description_relation = property(attrgetter('comodel_name'))
+                                    - _description_context = property(attrgetter('context'))
+                                    - child:
+                                        - `_Many2one(Field[M], typing.Generic[M])`:
+                                            - 

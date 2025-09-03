@@ -27,8 +27,8 @@ except ImportError:
     from decorator import decorator
 
 # from .exceptions import AccessError, UserError, CacheMiss
-# from .tools import clean_context, frozendict, lazy_property, OrderedSet, Query, SQL
-from .tools import frozendict, lazy_property, SQL, OrderedSet
+# from .tools import , , , , Query, 
+from .tools import frozendict, lazy_property, SQL, OrderedSet, clean_context
 # from .tools.translate import get_translation, get_translated_module, LazyGettext
 from inphms.tools.misc import StackMap
 
@@ -181,6 +181,7 @@ class Environment(Mapping):
     
     def __new__(cls, cr, uid, context, su=False, uid_origin=None):
         assert isinstance(cr, BaseCursor)
+        print("creating env", cr, uid, context, su, uid_origin)
         if uid == SUPERUSER_ID:
             su = True
 
@@ -216,6 +217,71 @@ class Environment(Mapping):
     #
     # Mapping methods
     #
+
+    def __contains__(self, model_name):
+        """ Test whether the given model exists. """
+        return model_name in self.registry
+
+    def __getitem__(self, model_name: str) -> BaseModel:
+        """ Return an empty recordset from the given model. """
+        return self.registry[model_name](self, (), ())
+
+    def __iter__(self):
+        """ Return an iterator on model names. """
+        return iter(self.registry)
+
+    def __len__(self):
+        """ Return the size of the model registry. """
+        return len(self.registry)
+
+    def __eq__(self, other):
+        return self is other
+
+    def __ne__(self, other):
+        return self is not other
+
+    def __hash__(self):
+        return object.__hash__(self)
+    
+    def __call__(self, cr=None, user=None, context=None, su=None):
+        """ Return an environment based on ``self`` with modified parameters.
+
+        :param cr: optional database cursor to change the current cursor
+        :type cursor: :class:`~odoo.sql_db.Cursor`
+        :param user: optional user/user id to change the current user
+        :type user: int or :class:`res.users record<~odoo.addons.base.models.res_users.Users>`
+        :param dict context: optional context dictionary to change the current context
+        :param bool su: optional boolean to change the superuser mode
+        :returns: environment with specified args (new or existing one)
+        :rtype: :class:`Environment`
+        """
+        print("calling env", cr, user, context, su)
+        cr = self.cr if cr is None else cr
+        uid = self.uid if user is None else int(user)
+        if context is None:
+            context = clean_context(self.context) if su and not self.su else self.context
+        su = (user is None and self.su) if su is None else su
+        return Environment(cr, uid, context, su, self.uid_origin)
+    
+    def ref(self, xml_id, raise_if_not_found=True):
+        """ Return the record corresponding to the given ``xml_id``.
+
+        :param str xml_id: record xml_id, under the format ``<module.id>``
+        :param bool raise_if_not_found: whether the method should raise if record is not found
+        :returns: Found record or None
+        :raise ValueError: if record wasn't found and ``raise_if_not_found`` is True
+        """
+        res_model, res_id = self['ir.model.data']._xmlid_to_res_model_res_id(
+            xml_id, raise_if_not_found=raise_if_not_found
+        )
+
+        if res_model and res_id:
+            record = self[res_model].browse(res_id)
+            if record.exists():
+                return record
+            if raise_if_not_found:
+                raise ValueError('No record found for unique ID %s. It may have been deleted.' % (xml_id))
+        return None
     
 
 def private(method): #ichecked
@@ -234,13 +300,15 @@ def private(method): #ichecked
     method._api_private = True
     return method
 
-def propagate(method1, method2):
+def propagate(method1, method2): #ichecked
     """ Propagate decorators from ``method1`` to ``method2``, and return the
         resulting method.
     """
     if method1:
         for attr in ('_returns',):
+            print('trying to propagate', attr)
             if hasattr(method1, attr) and not hasattr(method2, attr):
+                print('propagating', attr)
                 setattr(method2, attr, getattr(method1, attr))
     return method2
 

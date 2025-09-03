@@ -182,7 +182,7 @@ class SQL:
 
 
 
-def pg_varchar(size=0):
+def pg_varchar(size=0): #ichecked
     """ Returns the VARCHAR declaration for the provided size:
 
     * If no size (or an empty or negative size is provided) return an

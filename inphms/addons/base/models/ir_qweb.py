@@ -564,6 +564,7 @@ class IrQWeb(models.AbstractModel):
         tools.ormcache('template', 'tuple(self.env.context.get(k) for k in self._get_template_cache_keys())', cache='templates'),
     )
     def _get_view_id(self, template):
+        print("trying to get view id", template, self.__class__.__name__, self.env)
         try:
             return self.env['ir.ui.view'].sudo().with_context(load_all_views=True)._get_view_id(template)
         except Exception:
@@ -708,6 +709,7 @@ def render(template_name, values, load, **options):
             """ Return an mocked environment based and update the sent context.
                 Allow to use `ir_qweb.with_context` with sand boxed qweb.
             """
+            print("mock env is called", context)
             env = MockEnv()
             env.context.update(self.context if context is None else context)
             return env

@@ -342,7 +342,7 @@ class Field(MetaField('DummyField', (object,), {}), typing.Generic[T]):
     # attributes of those fields are: '_sequence', '_args__', 'model_name', 'name'
     # and '_module', which makes their __dict__'s size minimal.
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner, name): #ichecked
         """ Perform the base setup of a field.
 
         :param owner: the owner class of the field (the model's definition or registry class)
@@ -364,6 +364,135 @@ class Field(MetaField('DummyField', (object,), {}), typing.Generic[T]):
                 # free memory, self._args__ and self._base_fields are no longer useful
                 self.__dict__.pop('_args__', None)
                 self.__dict__.pop('_base_fields', None)
+        
+    #
+    # Setup field parameter attributes
+    #
+
+    def _get_attrs(self, model_class, name): #ichecked
+        """ Return the field parameter attributes as a dictionary. """
+        # determine all inherited field attributes
+        attrs = {}
+        modules = []
+        for field in self._args__.get('_base_fields', ()):
+            if not isinstance(self, type(field)):
+                # 'self' overrides 'field' and their types are not compatible;
+                # so we ignore all the parameters collected so far
+                attrs.clear()
+                modules.clear()
+                continue
+            attrs.update(field._args__)
+            if field._module:
+                modules.append(field._module)
+        attrs.update(self._args__)
+        if self._module:
+            modules.append(self._module)
+
+        attrs['_args__'] = dict(self._args__)
+        attrs['model_name'] = model_class._name
+        attrs['name'] = name
+        attrs['_module'] = modules[-1] if modules else None
+        attrs['_modules'] = tuple(set(modules))
+
+        # initialize ``self`` with ``attrs``
+        if name == 'state':
+            # by default, `state` fields should be reset on copy
+            attrs['copy'] = attrs.get('copy', False)
+        if attrs.get('compute'):
+            # by default, computed fields are not stored, computed in superuser
+            # mode if stored, not copied (unless stored and explicitly not
+            # readonly), and readonly (unless inversible)
+            attrs['store'] = store = attrs.get('store', False)
+            attrs['compute_sudo'] = attrs.get('compute_sudo', store)
+            if not (attrs['store'] and not attrs.get('readonly', True)):
+                attrs['copy'] = attrs.get('copy', False)
+            attrs['readonly'] = attrs.get('readonly', not attrs.get('inverse'))
+        if attrs.get('related'):
+            # by default, related fields are not stored, computed in superuser
+            # mode, not copied and readonly
+            attrs['store'] = store = attrs.get('store', False)
+            attrs['compute_sudo'] = attrs.get('compute_sudo', attrs.get('related_sudo', True))
+            attrs['copy'] = attrs.get('copy', False)
+            attrs['readonly'] = attrs.get('readonly', True)
+        if attrs.get('precompute'):
+            if not attrs.get('compute') and not attrs.get('related'):
+                warnings.warn(f"precompute attribute doesn't make any sense on non computed field {self}")
+                attrs['precompute'] = False
+            elif not attrs.get('store'):
+                warnings.warn(f"precompute attribute has no impact on non stored field {self}")
+                attrs['precompute'] = False
+        if attrs.get('company_dependent'):
+            if attrs.get('required'):
+                warnings.warn(f"company_dependent field {self} cannot be required")
+            if attrs.get('translate'):
+                warnings.warn(f"company_dependent field {self} cannot be translated")
+            if self.type not in COMPANY_DEPENDENT_FIELDS:
+                warnings.warn(f"company_dependent field {self} is not one of the allowed types {COMPANY_DEPENDENT_FIELDS}")
+            attrs['copy'] = attrs.get('copy', False)
+            # speed up search and on delete
+            attrs['index'] = attrs.get('index', 'btree_not_null')
+            attrs['prefetch'] = attrs.get('prefetch', 'company_dependent')
+            attrs['_depends_context'] = ('company',)
+        # parameters 'depends' and 'depends_context' are stored in attributes
+        # '_depends' and '_depends_context', respectively
+        if 'depends' in attrs:
+            attrs['_depends'] = tuple(attrs.pop('depends'))
+        if 'depends_context' in attrs:
+            attrs['_depends_context'] = tuple(attrs.pop('depends_context'))
+
+        if 'group_operator' in attrs:
+            warnings.warn("Since Inphms 18, 'group_operator' is deprecated, use 'aggregator' instead", DeprecationWarning, 2)
+            attrs['aggregator'] = attrs.pop('group_operator')
+
+        return attrs
+    
+    def _setup_attrs(self, model_class, name): #ichecked
+        """ Initialize the field parameter attributes. """
+        attrs = self._get_attrs(model_class, name)
+
+        # determine parameters that must be validated
+        extra_keys = tuple(key for key in attrs if not hasattr(self, key))
+        if extra_keys:
+            attrs['_extra_keys'] = extra_keys
+
+        self.__dict__.update(attrs)
+
+        # prefetch only stored, column, non-manual fields
+        if not self.store or not self.column_type or self.manual:
+            self.prefetch = False
+
+        if not self.string and not self.related:
+            # related fields get their string from their parent field
+            self.string = (
+                name[:-4] if name.endswith('_ids') else
+                name[:-3] if name.endswith('_id') else name
+            ).replace('_', ' ').title()
+
+        # self.default must be either None or a callable
+        if self.default is not None and not callable(self.default):
+            value = self.default
+            self.default = lambda model: value
+
+    #
+    # Setup of related fields
+    #
+
+    # properties used by setup_related() to copy values from related field
+    _related_comodel_name = property(attrgetter('comodel_name'))
+    _related_string = property(attrgetter('string'))
+    _related_help = property(attrgetter('help'))
+    _related_groups = property(attrgetter('groups'))
+    _related_aggregator = property(attrgetter('aggregator'))
+
+    @lazy_property
+    def column_type(self) -> tuple[str, str] | None:
+        """ Return the actual column type for this field, if stored as a column. """
+        return ('jsonb', 'jsonb') if self.company_dependent or self.translate else self._column_type
+
+    @property
+    def base_field(self):
+        """ Return the base field of an inherited field, or ``self``. """
+        return self.inherited_field.base_field if self.inherited_field else self
 
 
 class Boolean(Field[bool]):
@@ -458,6 +587,8 @@ class _String(Field[str | typing.Literal[False]]):
         if 'translate' in kwargs and not callable(kwargs['translate']):
             kwargs['translate'] = bool(kwargs['translate'])
         super().__init__(string=string, **kwargs)
+    
+    _related_translate = property(attrgetter('translate'))
 
 class Char(_String):
     """ Basic string field, can be length-limited, usually displayed as a
@@ -477,6 +608,20 @@ class Char(_String):
     """
     type = 'char'
     trim = True                         # whether value is trimmed (only by web client)
+
+    def _setup_attrs(self, model_class, name):
+        super()._setup_attrs(model_class, name)
+        assert self.size is None or isinstance(self.size, int), \
+            "Char field %s with non-integer size %r" % (self, self.size)
+
+    @property
+    def _column_type(self):
+        return ('varchar', pg_varchar(self.size))
+
+    _related_size = property(attrgetter('size'))
+    _related_trim = property(attrgetter('trim'))
+    _description_size = property(attrgetter('size'))
+    _description_trim = property(attrgetter('trim'))
 
 
 class Datetime(Field[datetime | typing.Literal[False]]):
@@ -512,6 +657,20 @@ class _Relational(Field[M], typing.Generic[M]):
             return super().__get__(records, owner)
         # multirecord case: use mapped
         return self.mapped(records)
+    
+    @property
+    def _related_domain(self):
+        def validated(domain):
+            if isinstance(domain, str) and not self.inherited:
+                # string domains are expressions that are not valid for self's model
+                return None
+            return domain
+
+        if callable(self.domain):
+            # will be called with another model than self's
+            return lambda recs: validated(self.domain(recs.env[self.model_name]))  # pylint: disable=not-callable
+        else:
+            return validated(self.domain)
 
     _related_context = property(attrgetter('context'))
 
@@ -520,34 +679,34 @@ class _Relational(Field[M], typing.Generic[M]):
 
 class Many2one(_Relational[M]):
     """ The value of such a field is a recordset of size 0 (no
-    record) or 1 (a single record).
+        record) or 1 (a single record).
 
-    :param str comodel_name: name of the target model
-        ``Mandatory`` except for related or extended fields.
+        :param str comodel_name: name of the target model
+            ``Mandatory`` except for related or extended fields.
 
-    :param domain: an optional domain to set on candidate values on the
-        client side (domain or a python expression that will be evaluated
-        to provide domain)
+        :param domain: an optional domain to set on candidate values on the
+            client side (domain or a python expression that will be evaluated
+            to provide domain)
 
-    :param dict context: an optional context to use on the client side when
-        handling that field
+        :param dict context: an optional context to use on the client side when
+            handling that field
 
-    :param str ondelete: what to do when the referred record is deleted;
-        possible values are: ``'set null'``, ``'restrict'``, ``'cascade'``
+        :param str ondelete: what to do when the referred record is deleted;
+            possible values are: ``'set null'``, ``'restrict'``, ``'cascade'``
 
-    :param bool auto_join: whether JOINs are generated upon search through that
-        field (default: ``False``)
+        :param bool auto_join: whether JOINs are generated upon search through that
+            field (default: ``False``)
 
-    :param bool delegate: set it to ``True`` to make fields of the target model
-        accessible from the current model (corresponds to ``_inherits``)
+        :param bool delegate: set it to ``True`` to make fields of the target model
+            accessible from the current model (corresponds to ``_inherits``)
 
-    :param bool check_company: Mark the field to be verified in
-        :meth:`~odoo.models.Model._check_company`. Has a different behaviour
-        depending on whether the field is company_dependent or not.
-        Constrains non-company-dependent fields to target records whose
-        company_id(s) are compatible with the record's company_id(s).
-        Constrains company_dependent fields to target records whose
-        company_id(s) are compatible with the currently active company.
+        :param bool check_company: Mark the field to be verified in
+            :meth:`~odoo.models.Model._check_company`. Has a different behaviour
+            depending on whether the field is company_dependent or not.
+            Constrains non-company-dependent fields to target records whose
+            company_id(s) are compatible with the record's company_id(s).
+            Constrains company_dependent fields to target records whose
+            company_id(s) are compatible with the currently active company.
     """
     type = 'many2one'
     _column_type = ('int4', 'int4')
@@ -558,6 +717,15 @@ class Many2one(_Relational[M]):
 
     def __init__(self, comodel_name: str | Sentinel = SENTINEL, string: str | Sentinel = SENTINEL, **kwargs):
         super().__init__(comodel_name=comodel_name, string=string, **kwargs)
+    
+    def _setup_attrs(self, model_class, name):
+        super()._setup_attrs(model_class, name)
+        # determine self.delegate
+        if not self.delegate and name in model_class._inherits.values():
+            self.delegate = True
+        # self.delegate implies self.auto_join
+        if self.delegate:
+            self.auto_join = True
 
 
 class Id(Field[IdType | typing.Literal[False]]):
@@ -588,3 +756,21 @@ class Id(Field[IdType | typing.Literal[False]]):
 
     def __set__(self, record, value):
         raise TypeError("field 'id' cannot be assigned")
+
+
+
+
+
+
+
+# imported here to avoid dependency cycle issues
+# pylint: disable=wrong-import-position
+from .exceptions import AccessError, MissingError, UserError
+# from .models import (
+#     check_pg_name, expand_ids, is_definition_class,
+#     BaseModel, PREFETCH_MAX,
+# )
+from .models import (
+    BaseModel,
+    is_definition_class,
+)
