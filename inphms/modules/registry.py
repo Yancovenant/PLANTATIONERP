@@ -33,6 +33,7 @@ from inphms.tools import (
 from inphms.tools.func import locked
 from inphms.tools.lru import LRU
 # from inphms.tools.misc import Collector, format_frame
+from inphms.tools.misc import Collector
 
 if typing.TYPE_CHECKING:
     from inphms.models import BaseModel
@@ -176,6 +177,13 @@ class Registry(Mapping):
 
     @classmethod
     @locked
+    def delete(cls, db_name):
+        """ Delete the registry linked to a given database. """
+        if db_name in cls.registries:  # pylint: disable=unsupported-membership-test
+            del cls.registries[db_name]  # pylint: disable=unsupported-delete-operation
+
+    @classmethod
+    @locked
     def new(cls, db_name, force_demo=False, status=None, update_module=False):
         """ Create and return a new registry for the given database name. """
         print("new registry", db_name, force_demo, status, update_module)
@@ -246,3 +254,148 @@ class Registry(Mapping):
         # the custom model can inherit from mixins ('mail.thread', ...)
         for Model in self.models.values():
             Model._inherit_children.discard(model_name)
+
+
+    def get_sequences(self, cr):
+        assert cr.readonly is False, "can't use replica, sequence data is not replicated"
+
+        cache_sequences_query = ', '.join([f'base_cache_signaling_{cache_name}' for cache_name in _CACHES_BY_KEY])
+        cache_sequences_values_query = ',\n'.join([f'base_cache_signaling_{cache_name}.last_value' for cache_name in _CACHES_BY_KEY])
+        cr.execute(f"""
+            SELECT base_registry_signaling.last_value, {cache_sequences_values_query}
+            FROM base_registry_signaling, {cache_sequences_query}
+        """)
+        registry_sequence, *cache_sequences_values = cr.fetchone()
+        cache_sequences = dict(zip(_CACHES_BY_KEY, cache_sequences_values))
+        return registry_sequence, cache_sequences
+
+    def setup_signaling(self):
+        """ Setup the inter-process signaling on this registry. """
+        if self.in_test_mode():
+            return
+
+        with self.cursor() as cr:
+            # The `base_registry_signaling` sequence indicates when the registry
+            # must be reloaded.
+            # The `base_cache_signaling_...` sequences indicates when caches must
+            # be invalidated (i.e. cleared).
+            sequence_names = ('base_registry_signaling', *(f'base_cache_signaling_{cache_name}' for cache_name in _CACHES_BY_KEY))
+            cr.execute("SELECT sequence_name FROM information_schema.sequences WHERE sequence_name IN %s", [sequence_names])
+            existing_sequences = tuple(s[0] for s in cr.fetchall())  # could be a set but not efficient with such a little list
+
+            for sequence_name in sequence_names:
+                if sequence_name not in existing_sequences:
+                    cr.execute(SQL(
+                        "CREATE SEQUENCE %s INCREMENT BY 1 START WITH 1",
+                        SQL.identifier(sequence_name),
+                    ))
+                    cr.execute(SQL("SELECT nextval(%s)", sequence_name))
+
+            db_registry_sequence, db_cache_sequences = self.get_sequences(cr)
+            self.registry_sequence = db_registry_sequence
+            self.cache_sequences.update(db_cache_sequences)
+
+            _logger.debug("Multiprocess load registry signaling: [Registry: %s] %s",
+                          self.registry_sequence, ' '.join('[Cache %s: %s]' % cs for cs in self.cache_sequences.items()))
+    
+    def check_signaling(self, cr=None):
+        """ Check whether the registry has changed, and performs all necessary
+        operations to update the registry. Return an up-to-date registry.
+        """
+        if self.in_test_mode():
+            return self
+
+        with nullcontext(cr) if cr is not None else closing(self.cursor()) as cr:
+            db_registry_sequence, db_cache_sequences = self.get_sequences(cr)
+            changes = ''
+            # Check if the model registry must be reloaded
+            if self.registry_sequence != db_registry_sequence:
+                _logger.info("Reloading the model registry after database signaling.")
+                self = Registry.new(self.db_name)
+                self.registry_sequence = db_registry_sequence
+                if _logger.isEnabledFor(logging.DEBUG):
+                    changes += "[Registry - %s -> %s]" % (self.registry_sequence, db_registry_sequence)
+            # Check if the model caches must be invalidated.
+            else:
+                invalidated = []
+                for cache_name, cache_sequence in self.cache_sequences.items():
+                    expected_sequence = db_cache_sequences[cache_name]
+                    if cache_sequence != expected_sequence:
+                        for cache in _CACHES_BY_KEY[cache_name]: # don't call clear_cache to avoid signal loop
+                            if cache not in invalidated:
+                                invalidated.append(cache)
+                                self.__caches[cache].clear()
+                        self.cache_sequences[cache_name] = expected_sequence
+                        if _logger.isEnabledFor(logging.DEBUG):
+                            changes += "[Cache %s - %s -> %s]" % (cache_name, cache_sequence, expected_sequence)
+                if invalidated:
+                    _logger.info("Invalidating caches after database signaling: %s", sorted(invalidated))
+            if changes:
+                _logger.debug("Multiprocess signaling check: %s", changes)
+        return self
+
+    def signal_changes(self):
+        """ Notifies other processes if registry or cache has been invalidated. """
+        if not self.ready:
+            _logger.warning('Calling signal_changes when registry is not ready is not suported')
+            return
+
+        if self.registry_invalidated:
+            _logger.info("Registry changed, signaling through the database")
+            with closing(self.cursor()) as cr:
+                cr.execute("select nextval('base_registry_signaling')")
+                # If another process concurrently updates the registry,
+                # self.registry_sequence will actually be out-of-date,
+                # and the next call to check_signaling() will detect that and trigger a registry reload.
+                # otherwise, self.registry_sequence should be equal to cr.fetchone()[0]
+                self.registry_sequence += 1
+
+        # no need to notify cache invalidation in case of registry invalidation,
+        # because reloading the registry implies starting with an empty cache
+        elif self.cache_invalidated:
+            _logger.info("Caches invalidated, signaling through the database: %s", sorted(self.cache_invalidated))
+            with closing(self.cursor()) as cr:
+                for cache_name in self.cache_invalidated:
+                    cr.execute("select nextval(%s)", [f'base_cache_signaling_{cache_name}'])
+                    # If another process concurrently updates the cache,
+                    # self.cache_sequences[cache_name] will actually be out-of-date,
+                    # and the next call to check_signaling() will detect that and trigger cache invalidation.
+                    # otherwise, self.cache_sequences[cache_name] should be equal to cr.fetchone()[0]
+                    self.cache_sequences[cache_name] += 1
+
+        self.registry_invalidated = False
+        self.cache_invalidated.clear()
+
+    def in_test_mode(self):
+        """ Test whether the registry is in 'test' mode. """
+        return self.test_cr is not None
+    
+    
+    def cursor(self, /, readonly=False):
+        """ Return a new cursor for the database. The cursor itself may be used
+            as a context manager to commit/rollback and close automatically.
+
+            :param readonly: Attempt to acquire a cursor on a replica database.
+                Acquire a read/write cursor on the primary database in case no
+                replica exists or that no readonly cursor could be acquired.
+        """
+        if self.test_cr is not None:
+            # in test mode we use a proxy object that uses 'self.test_cr' underneath
+            if readonly and not self.test_readonly_enabled:
+                _logger.info('Explicitly ignoring readonly flag when generating a cursor')
+            return TestCursor(self.test_cr, self.test_lock, readonly and self.test_readonly_enabled, current_test=inphms.modules.module.current_test)
+
+        if readonly and self._db_readonly is not None:
+            if (
+                self._db_readonly_failed_time is None
+                or time.monotonic() > self._db_readonly_failed_time + _REPLICA_RETRY_TIME
+            ):
+                try:
+                    cr = self._db_readonly.cursor()
+                    self._db_readonly_failed_time = None
+                    return cr
+                except psycopg2.OperationalError:
+                    self._db_readonly_failed_time = time.monotonic()
+                    _logger.warning("Failed to open a readonly cursor, falling back to read-write cursor for %dmin %dsec", *divmod(_REPLICA_RETRY_TIME, 60))
+            threading.current_thread().cursor_mode = 'ro->rw'
+        return self._db.cursor()

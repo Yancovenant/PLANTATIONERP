@@ -547,7 +547,6 @@ class BaseModel(metaclass=MetaModel):
         .. note::
             The returned recordset has the same prefetch object as ``self``.
         """
-        print("with_env", self.__class__.__name__, env, self._ids, self._prefetch_ids)
         return self.__class__(env, self._ids, self._prefetch_ids)
 
     @api.private

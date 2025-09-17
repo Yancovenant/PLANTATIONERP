@@ -587,7 +587,6 @@ class configmanager(object):
         return opt
 
 
-
     def _check_addons_path(self, option, opt, value, parser):
         ad_paths = []
         for path in value.split(','):
@@ -795,5 +794,8 @@ class configmanager(object):
             if updated_hash:
                 self.options['admin_passwd'] = updated_hash
             return True
+        
+    def set_admin_password(self, new_password):
+        self.options['admin_passwd'] = crypt_context.hash(new_password)
 
 config = configmanager()

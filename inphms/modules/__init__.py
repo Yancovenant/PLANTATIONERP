@@ -4,9 +4,12 @@
 """ Modules (also called Addons) Management
 
 """
-
+# from . import , graph, loading, migration, neutralize
 from . import module
 from . import registry
+from . import db
+
+from inphms.modules.loading import load_modules, reset_modules_state
 
 from inphms.modules.module import (
     initialize_sys_path,

@@ -12,6 +12,7 @@ import inphms
 import inphms.modules.registry
 from inphms import http
 # from inphms.http import content_disposition, dispatch_rpc, request, Response
+from inphms.http import dispatch_rpc
 from inphms.http import request
 from inphms.service import db
 # from inphms.tools.misc import file_open, str2bool
@@ -61,3 +62,23 @@ class Database(http.Controller):
         if request.db:
             request.env.cr.close()
         return self._render_template(manage=False)
+
+    @http.route('/web/database/create', type='http', auth="none", methods=['POST'], csrf=False)
+    def create(self, master_pwd, name, lang, password, **post):
+        insecure = inphms.tools.config.verify_admin_password('admin')
+        if insecure and master_pwd:
+            dispatch_rpc('db', 'change_admin_password', ["admin", master_pwd])
+        try:
+            if not re.match(DBNAME_PATTERN, name):
+                raise Exception(_('Houston, we have a database naming issue! Make sure you only use letters, numbers, underscores, hyphens, or dots in the database name, and you\'ll be golden.'))
+            # country code could be = "False" which is actually True in python
+            country_code = post.get('country_code') or False
+            dispatch_rpc('db', 'create_database', [master_pwd, name, bool(post.get('demo')), lang, password, post['login'], country_code, post['phone']])
+            credential = {'login': post['login'], 'password': password, 'type': 'password'}
+            request.session.authenticate(name, credential)
+            request.session.db = name
+            return request.redirect('/inphms')
+        except Exception as e:
+            _logger.exception("Database creation error.")
+            error = "Database creation error: %s" % (str(e) or repr(e))
+        return self._render_template(error=error)

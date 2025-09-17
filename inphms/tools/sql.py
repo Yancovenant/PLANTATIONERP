@@ -39,37 +39,37 @@ _CONFDELTYPES = {
 class SQL:
     """ An object that wraps SQL code with its parameters, like::
 
-        sql = SQL("UPDATE TABLE foo SET a = %s, b = %s", 'hello', 42)
-        cr.execute(sql)
+            sql = SQL("UPDATE TABLE foo SET a = %s, b = %s", 'hello', 42)
+            cr.execute(sql)
 
-    The code is given as a ``%``-format string, and supports either positional
-    arguments (with `%s`) or named arguments (with `%(name)s`). Escaped
-    characters (like ``"%%"``) are not supported, though. The arguments are
-    meant to be merged into the code using the `%` formatting operator.
+        The code is given as a ``%``-format string, and supports either positional
+        arguments (with `%s`) or named arguments (with `%(name)s`). Escaped
+        characters (like ``"%%"``) are not supported, though. The arguments are
+        meant to be merged into the code using the `%` formatting operator.
 
-    The SQL wrapper is designed to be composable: the arguments can be either
-    actual parameters, or SQL objects themselves::
+        The SQL wrapper is designed to be composable: the arguments can be either
+        actual parameters, or SQL objects themselves::
 
-        sql = SQL(
-            "UPDATE TABLE %s SET %s",
-            SQL.identifier(tablename),
-            SQL("%s = %s", SQL.identifier(columnname), value),
-        )
+            sql = SQL(
+                "UPDATE TABLE %s SET %s",
+                SQL.identifier(tablename),
+                SQL("%s = %s", SQL.identifier(columnname), value),
+            )
 
-    The combined SQL code is given by ``sql.code``, while the corresponding
-    combined parameters are given by the list ``sql.params``. This allows to
-    combine any number of SQL terms without having to separately combine their
-    parameters, which can be tedious, bug-prone, and is the main downside of
-    `psycopg2.sql <https://www.psycopg.org/docs/sql.html>`.
+        The combined SQL code is given by ``sql.code``, while the corresponding
+        combined parameters are given by the list ``sql.params``. This allows to
+        combine any number of SQL terms without having to separately combine their
+        parameters, which can be tedious, bug-prone, and is the main downside of
+        `psycopg2.sql <https://www.psycopg.org/docs/sql.html>`.
 
-    The second purpose of the wrapper is to discourage SQL injections. Indeed,
-    if ``code`` is a string literal (not a dynamic string), then the SQL object
-    made with ``code`` is guaranteed to be safe, provided the SQL objects
-    within its parameters are themselves safe.
+        The second purpose of the wrapper is to discourage SQL injections. Indeed,
+        if ``code`` is a string literal (not a dynamic string), then the SQL object
+        made with ``code`` is guaranteed to be safe, provided the SQL objects
+        within its parameters are themselves safe.
 
-    The wrapper may also contain some metadata ``to_flush``.  If not ``None``,
-    its value is a field which the SQL code depends on.  The metadata of a
-    wrapper and its parts can be accessed by the iterator ``sql.to_flush``.
+        The wrapper may also contain some metadata ``to_flush``.  If not ``None``,
+        its value is a field which the SQL code depends on.  The metadata of a
+        wrapper and its parts can be accessed by the iterator ``sql.to_flush``.
     """
     __slots__ = ('__code', '__params', '__to_flush')
 
@@ -180,6 +180,21 @@ class SQL:
         assert subname.isidentifier() or IDENT_RE.match(subname), f"{subname!r} invalid for SQL.identifier()"
         return cls(f'"{name}"."{subname}"', to_flush=to_flush)
 
+def existing_tables(cr, tablenames):
+    """ Return the names of existing tables among ``tablenames``. """
+    cr.execute(SQL("""
+        SELECT c.relname
+          FROM pg_class c
+          JOIN pg_namespace n ON (n.oid = c.relnamespace)
+         WHERE c.relname IN %s
+           AND c.relkind IN ('r', 'v', 'm')
+           AND n.nspname = current_schema
+    """, tuple(tablenames)))
+    return [row[0] for row in cr.fetchall()]
+
+def table_exists(cr, tablename):
+    """ Return whether the given table exists. """
+    return len(existing_tables(cr, {tablename})) == 1
 
 
 def pg_varchar(size=0): #ichecked

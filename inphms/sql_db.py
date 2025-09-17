@@ -691,6 +691,13 @@ def db_connect(to, allow_uri=False, readonly=False): #ichecked
         raise ValueError('URI connections not allowed')
     return Connection(_Pool_readonly if readonly else _Pool, db, info)
 
+def close_db(db_name):
+    """ You might want to call inphms.modules.registry.Registry.delete(db_name) along this function."""
+    if _Pool:
+        _Pool.close_all(connection_info_for(db_name)[1])
+    if _Pool_readonly:
+        _Pool_readonly.close_all(connection_info_for(db_name)[1])
+
 def close_all(): #ichecked
     if _Pool:
         _Pool.close_all()

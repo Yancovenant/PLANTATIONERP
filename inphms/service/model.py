@@ -10,7 +10,7 @@ from psycopg2 import IntegrityError, OperationalError, errorcodes, errors
 
 import inphms
 from inphms.exceptions import UserError, ValidationError, AccessError
-# from inphms.models import BaseModel
+from inphms.models import BaseModel
 from inphms.http import request
 from inphms.modules.registry import Registry
 from inphms.tools import DotDict, lazy
@@ -129,3 +129,83 @@ def retrying(func, env):
         env.cr.commit()  # effectively commits and execute post-commits
     env.registry.signal_changes()
     return result
+
+
+def _traverse_containers(val, type_):
+    """ Yields atoms filtered by specified ``type_`` (or type tuple), traverses
+    through standard containers (non-string mappings or sequences) *unless*
+    they're selected by the type filter
+    """
+    from inphms.models import BaseModel
+    if isinstance(val, type_):
+        yield val
+    elif isinstance(val, (str, bytes, BaseModel)):
+        return
+    elif isinstance(val, Mapping):
+        for k, v in val.items():
+            yield from _traverse_containers(k, type_)
+            yield from _traverse_containers(v, type_)
+    elif isinstance(val, Sequence):
+        for v in val:
+            yield from _traverse_containers(v, type_)
+
+def get_public_method(model, name):
+    """ Get the public unbound method from a model.
+    When the method does not exist or is inaccessible, raise appropriate errors.
+    Accessible methods are public (in sense that python defined it:
+    not prefixed with "_") and are not decorated with `@api.private`.
+    """
+    assert isinstance(model, BaseModel), f"{model!r} is not a BaseModel for {name}"
+    cls = type(model)
+    method = getattr(cls, name, None)
+    if not callable(method):
+        raise AttributeError(f"The method '{model._name}.{name}' does not exist")  # noqa: TRY004
+    for mro_cls in cls.mro():
+        cla_method = getattr(mro_cls, name, None)
+        if not cla_method:
+            continue
+        if name.startswith('_') or getattr(cla_method, '_api_private', False):
+            raise AccessError(f"Private methods (such as '{model._name}.{name}') cannot be called remotely.")
+    return method
+
+def execute(db, uid, obj, method, *args, **kw):
+    # TODO could be conditionnaly readonly as in _call_kw_readonly
+    with Registry(db).cursor() as cr:
+        res = execute_cr(cr, uid, obj, method, *args, **kw)
+        if res is None:
+            _logger.info('The method %s of the object %s can not return `None`!', method, obj)
+        return res
+
+def execute_cr(cr, uid, obj, method, *args, **kw):
+    # clean cache etc if we retry the same transaction
+    cr.reset()
+    env = inphms.api.Environment(cr, uid, {})
+    recs = env.get(obj)
+    if recs is None:
+        raise UserError(env._("Object %s doesn't exist", obj))
+    get_public_method(recs, method)  # Don't use the result, call_kw will redo the getattr
+    result = retrying(partial(inphms.api.call_kw, recs, method, args, kw), env)
+    # force evaluation of lazy values before the cursor is closed, as it would
+    # error afterwards if the lazy isn't already evaluated (and cached)
+    for l in _traverse_containers(result, lazy):
+        _0 = l._value
+    return result
+
+def execute_kw(db, uid, obj, method, args, kw=None):
+    return execute(db, uid, obj, method, *args, **kw or {})
+
+def dispatch(method, params):
+    db, uid, passwd = params[0], int(params[1]), params[2]
+    security.check(db, uid, passwd)
+
+    threading.current_thread().dbname = db
+    threading.current_thread().uid = uid
+    registry = Registry(db).check_signaling()
+    with registry.manage_changes():
+        if method == 'execute':
+            res = execute(db, uid, *params[3:])
+        elif method == 'execute_kw':
+            res = execute_kw(db, uid, *params[3:])
+        else:
+            raise NameError("Method not available %s" % method)
+    return res

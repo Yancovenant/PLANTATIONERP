@@ -483,6 +483,33 @@ class frozendict(dict[K, T], typing.Generic[K, T]):
     def __hash__(self) -> int:  # type: ignore
         return hash(frozenset((key, freehash(val)) for key, val in self.items()))
 
+class Collector(dict[K, tuple[T, ...]], typing.Generic[K, T]):
+    """ A mapping from keys to tuples.  This implements a relation, and can be
+        seen as a space optimization for ``defaultdict(tuple)``.
+    """
+    __slots__ = ()
+
+    def __getitem__(self, key: K) -> tuple[T, ...]:
+        return self.get(key, ())
+
+    def __setitem__(self, key: K, val: Iterable[T]):
+        val = tuple(val)
+        if val:
+            super().__setitem__(key, val)
+        else:
+            super().pop(key, None)
+
+    def add(self, key: K, val: T):
+        vals = self[key]
+        if val not in vals:
+            self[key] = vals + (val,)
+
+    def discard_keys_and_values(self, excludes: Collection[K | T]) -> None:
+        for key in excludes:
+            self.pop(key, None)  # type: ignore
+        for key, vals in list(self.items()):
+            self[key] = tuple(val for val in vals if val not in excludes)  # type: ignore
+
 class ReadonlyDict(Mapping[K, T], typing.Generic[K, T]):
     """Helper for an unmodifiable dictionary, not even updatable using `dict.update`.
 

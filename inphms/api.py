@@ -306,7 +306,6 @@ def propagate(method1, method2): #ichecked
     """
     if method1:
         for attr in ('_returns',):
-            print('trying to propagate', attr)
             if hasattr(method1, attr) and not hasattr(method2, attr):
                 print('propagating', attr)
                 setattr(method2, attr, getattr(method1, attr))
